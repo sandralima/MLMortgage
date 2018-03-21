@@ -1,19 +1,32 @@
 # -*- coding: utf-8 -*-
 import os
-import click
 import logging
 from dotenv import find_dotenv, load_dotenv
+import build_data as bd
 
 
-@click.command()
-@click.argument('input_filepath', type=click.Path(exists=True))
-@click.argument('output_filepath', type=click.Path())
-def main(input_filepath, output_filepath):
+def get_data(num_examples, valid_num, test_num, weighted_sampling, dataset_name='MORT', stratified_flag=False, refNorm=True):
+    """Load the data into the program."""
+    # Loading the dataset.
+    if dataset_name.upper() == 'MORT':
+        
+        data = bd.read_data_sets(num_examples, valid_num, test_num, #(20000,1000,1000,
+                                        weighted_sampling, stratified_flag=stratified_flag, refNorm=refNorm)
+#    elif dataset_name.upper() == 'MNIST':
+#        data = input_data.read_data_sets(FLAGS.data_dir, one_hot=True)
+#    else:
+#        data = not_mnist.read_data_sets(55000)
+    print('Loaded all the data....')
+    return data
+
+def main(project_dir):
     """ Runs data processing scripts to turn raw data from (../raw) into
         cleaned data ready to be analyzed (saved in ../processed).
     """
     logger = logging.getLogger(__name__)
     logger.info('making final data set from raw data')
+    # datasets = bd.read_data_sets(55000, 10000, 10000)
+    
 
 
 if __name__ == '__main__':
@@ -27,4 +40,4 @@ if __name__ == '__main__':
     # load up the .env entries as environment variables
     load_dotenv(find_dotenv())
 
-    main()
+    main(project_dir)    

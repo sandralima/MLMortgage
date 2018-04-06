@@ -11,6 +11,7 @@ import logging
 import os
 from dotenv import find_dotenv, load_dotenv
 import data_classes
+import datetime
 
 from sklearn.preprocessing import QuantileTransformer
 from sklearn.preprocessing import OneHotEncoder
@@ -127,7 +128,7 @@ def extract_numeric_labels(data, label_column='MBA_DELINQUENCY_STATUS_next'):
     logger.info('mapped labels: ' + str(dict_labels))
     data.drop(label_column, axis=1, inplace=True)
     logger.info('...Labels extracted from Dataset...')
-    logger.info('Size of the labels after extract_labels:' + str(labels.shape))
+    logger.info('Size of the dataset after extract_labels:' + str(data.shape))
     return labels
 
 
@@ -226,7 +227,7 @@ def oneHotDummies_column(column):
     Args: 
         column (Series): Input String Categorical Column.
     Returns: 
-        DataFrame. Integer Sparse matrix of categorical features.
+        DataFrame. Integer Sparse binary matrix of categorical features.
     Raises:        
     '''    
     return pd.get_dummies(column)
@@ -362,11 +363,11 @@ def main(project_dir):
     """   
     logger.name ='__main__'     
     logger.info('Retrieving DataFrame from Raw Data, Data Sampling')
-    # all_data = grd.read_df(45)
-    # all_data['LLMA2_APPVAL_LT_SALEPRICE'] = reformat(all_data['LLMA2_APPVAL_LT_SALEPRICE'], typ=DT_BOOL)
+    all_data = grd.read_df(45)   
+    all_data['LLMA2_APPVAL_LT_SALEPRICE'] = reformat(all_data['LLMA2_APPVAL_LT_SALEPRICE'], typ=DT_BOOL)
     # s_data = grd.stratified_sample_data(all_data, 0.2)        
-    DATA = read_data_sets(220000, 20000, 20000, refNorm=False)
-    print(DATA.feature_columns)
+    # DATA = read_data_sets(220000, 20000, 20000, refNorm=False)
+    # print(DATA.feature_columns)
         
 
 
@@ -380,3 +381,21 @@ if __name__ == '__main__':
     load_dotenv(find_dotenv())
 
     main(project_dir)
+        
+
+#def invalid_transition(group):    
+#    # np.dstack((arr_a, arr_b)) # doesn't work
+#    transition_chain = np.array(list(zip(data['MBA_DELINQUENCY_STATUS_next'],data['MBA_DELINQUENCY_STATUS_next'][1:])))
+#    date_diff = (data[['ASOFMONTH']].diff() <= datetime.timedelta(days=31)).values.ravel()
+#    transition_chain = transition_chain[date_diff[1:]] 
+#    invalid_transitions = np.array([[4, 2], [4, 3], [1, 3], [0, 1], [0, 2], [0, 3], [0, 4], [0, 5], [0, 6], 
+#                           [6, 0], [6, 1], [6, 2], [6, 3], [6, 4], [6, 5]])
+#    
+#    uw = []
+#    i = 0
+#    for z in range(0,len(transition_chain)):        
+#        # it doesnt work because 
+#        if (transition_chain[z] in invalid_transitions): # other cycle More long time.
+#            uw.append(i+1)
+
+# drop_invalid_delinquency_status(new_data, invalid_transition, status=None)

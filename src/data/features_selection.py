@@ -172,7 +172,7 @@ def benchmark(clf, name,X_train, y_train, X_test, y_test):
         confusion_matrix(y_test, pred, "confusion matrix testing set:")    
     
     clf_descr = str(clf).split('(')[0]
-    return clf_descr, score, train_time, test_time
+    return clf_descr, training_pred, pred, score, train_time, test_time
 
 def apply_classifier(X_train, X_test, y_train, y_test, random_seed):    
     clf = Pipeline([('RandomForestClassifier', RandomForestClassifier(n_estimators=100, n_jobs = -1, random_state=random_seed))])
@@ -248,7 +248,8 @@ columns = ['MBA_DAYS_DELINQUENT','CURRENT_INTEREST_RATE', 'LLMA2_CURRENT_INTERES
                           'CHANNEL_U','LOAN_TYPE_1', 'LOAN_TYPE_2', 'LOAN_TYPE_3', 'LOAN_TYPE_4','LOAN_TYPE_U', 'STATE', 'UR', 'MBA_DELINQUENCY_STATUS_next']
 # b_data = select_specific_features(all_data, columns)    
 # X_train, X_test, y_train, y_test = ms.train_test_split(b_data, labels, test_size=0.33, random_state=RANDOM_SEED, stratify=labels)    
-DATA = make_dataset.get_data(220000, 20000, 20000, False, dataset_name='MORT', 
-                             stratified_flag = False, refNorm=False)
-results = apply_classifier(DATA.train.features, DATA.validation.features, 
-                           DATA.train.labels, DATA.validation.labels, RANDOM_SEED)
+
+#def get_data(training_examples, validation_examples, test_examples, weighted_sampling, 
+#             dataset_name='MORT', stratified_flag=False, refNorm=True):
+#    return make_dataset.get_data(training_examples, validation_examples, test_examples, weighted_sampling, 
+#                                 dataset_name=dataset_name, stratified_flag = stratified_flag, refNorm=refNorm)

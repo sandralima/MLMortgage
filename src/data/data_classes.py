@@ -23,6 +23,9 @@ class DataBatch(object):
             raise TypeError('batch_size has to be of int type.')
         # if self._global_index == 0:
         #     self.sample()
+        print('self._global_index: ', self._global_index)
+        # print('self._global_index end: ', self._global_index + batch_size)
+                
         if self._global_index + batch_size <= self._num_examples:
             temp_features = self.features[self._global_index:
                                           self._global_index + batch_size, :]
@@ -44,6 +47,7 @@ class DataBatch(object):
             self._global_index = temp_end
             # self.shuffle()
             self._global_index = 0
+            
         return temp_features, temp_labels, np.array(
             [1.0], dtype=np.dtype('float32'))  # temp_weights
 
@@ -53,7 +57,15 @@ class DataBatch(object):
         self.features = self.features[permutation, :]
         self.labels = self.labels[permutation]
         return
-
+    
+    def shuffle(self, data, labels):
+        """Reshuffle the dataset data and its corresponding labels."""
+        rows = np.shape(data)[0]
+        permutation = np.random.permutation(rows)
+        data = data[permutation, :]
+        labels = labels[permutation]
+        return
+    
     def sample(self):
         """Sample with replacement."""
         probs = self.weights / self.weights.sum()

@@ -685,16 +685,17 @@ def batch_training(sess, writers):
     def train_one_epoch(epoch, batch_size):
         print("Complete one epoch of the training.")		
         batch_num = DATA.train.num_examples // batch_size        
+        print('batch_num:', batch_num)
         avg_cost = 0
         # keep track of the number of times batch_cost is not calculated
         excluded = 0
         for batch_i in range(batch_num):
             step = epoch * batch_num + batch_i
-            # print ('step: ', step)
+            # print ('step: ', step) # it depends on the epoch, it is continuos values steps along the epochs.
             # print ('(step * batch_size) % (DATA.train.num_examples): ', (step * batch_size) % (DATA.train.num_examples))
-            if step > 0 and (step * batch_size) % (
-                    DATA.train.num_examples) < batch_size:
+            if step > 0 and (step * batch_size) % (DATA.train.num_examples) < batch_size:
                 # Train and record execution stats
+                print ('(step * batch_size) % (DATA.train.num_examples): ', (step * batch_size) % (DATA.train.num_examples))
                 train_and_summarize(sess, writers, step)
                 excluded += 1
                 # print(('Added run metadata for epoch {:03d}, '
@@ -702,14 +703,14 @@ def batch_training(sess, writers):
             else:
                 # print('else step: ', step)
                 batch_cost, _ = sess.run( # Runs operations and evaluates tensors in fetches.
-                    ['loss:0', 'train'], feed_dict=create_feed_dict('batch'))
+                    ['loss:0', 'train'], feed_dict=create_feed_dict('batch', DATA, FLAGS))
                 avg_cost += batch_cost
         # The division should stay outside the inner for loop.
         if (batch_num - excluded) > 0: avg_cost = avg_cost / (batch_num - excluded)            
         return avg_cost 
 
     # # Create a saver for writing training checkpoints.
-    # saver = tf.train.Saver(var_list=None, max_to_keep=5)
+    saver = tf.train.Saver(var_list=None, max_to_keep=5)
     # # Initialize all the variables in the graph.
     sess.run('init')
     print('Initialized all the local and global variables in the graph....')
@@ -720,8 +721,8 @@ def batch_training(sess, writers):
         print_stats(get_metrics(sess, 'valid'), 'valid')
         # Do __not__ delete the following 2 lines; they periodically save the
         # model.
-        # checkpoint_file = os.path.join(FLAGS.logdir, 'model.ckpt')
-        # saver.save(sess, checkpoint_file, global_step=step)
+        checkpoint_file = FLAGS.logdir + '/model.ckpt' # os.path.join(FLAGS.logdir, 'model.ckpt')
+        saver.save(sess, checkpoint_file, global_step=epoch)
     return
 
 
@@ -778,7 +779,7 @@ def reset_and_update(sess, feed_dict):
 
 def get_metrics(sess, mode):
     """Get the accuracy over the dataset corresponding to the given mode."""
-    feed_dict = create_feed_dict(mode)
+    feed_dict = create_feed_dict(mode, DATA, FLAGS)
     reset_and_update(sess, feed_dict)
     return sess.run(
         [
@@ -794,7 +795,7 @@ def train_and_summarize(sess, writers, step):
     """Train and record execution metadata for use in TB."""
     batch_writer = writers['batch']
     summary, _ = sess.run(
-        ['Merge/MergeSummary:0', 'train'], feed_dict=create_feed_dict('batch'))
+        ['Merge/MergeSummary:0', 'train'], feed_dict=create_feed_dict('batch', DATA, FLAGS))
     # Do __not__ delete the following lines. I've disabled these just to make
     # the program faster; however, these would write metadata to TB.
 
@@ -821,7 +822,7 @@ def train_and_summarize(sess, writers, step):
 def write_summaries(sess, writers, mode, step):
     """Get the summary protobuf and write it to the Summary.FileWriter."""
     writer = writers[mode]
-    feed_dict = create_feed_dict(mode)
+    feed_dict = create_feed_dict(mode, DATA, FLAGS)
     reset_and_update(sess, feed_dict)
     summary = sess.run('Merge/MergeSummary:0', feed_dict=feed_dict)
     writer.add_summary(summary, step)
@@ -829,7 +830,7 @@ def write_summaries(sess, writers, mode, step):
     return
 
 
-def create_feed_dict(tag):
+def create_feed_dict(tag, DATA, FLAGS):
     """Create the feed dictionary for mapping data onto placeholders in the graph."""
     if tag == 'batch':
         features, targets, example_weights = DATA.train.next_batch( # example_weights = [1.0] it is not used in the inference.
@@ -884,7 +885,16 @@ def create_feed_dict(tag):
     
     return feed_d
 
+def retrieve_tf_model():
+    checkpoint_file = os.path.join(Path(FLAGS.logdir), 'my_test_model-1000.meta')
+    print(checkpoint_file)
+    # with tf.Session() as sess:    
+    sess = tf.Session()
+    new_saver = tf.train.import_meta_graph(checkpoint_file)
+    new_saver.restore(sess, tf.train.latest_checkpoint(Path(FLAGS.logdir)))
 
+def retrieve_FLAGS():
+    return FLAGS
 ##########################
 # ## SETTINGS
 ##########################
@@ -902,7 +912,7 @@ def main(_):
 
     # Hyperparameters
     #print("FLAGS.epoch_num", FLAGS.epoch_num)
-    FLAGS.epoch_num = 120  # 14  # 17  # 35  # 15
+    FLAGS.epoch_num = 2  # 14  # 17  # 35  # 15
     #print("FLAGS.epoch_num", FLAGS.epoch_num)
     FLAGS.batch_size = 256  # do NOT increase this to 1024 # 64  # 128  #
     FLAGS.dropout_keep = 0.9  # 0.9  # 0.95  # .75  # .6
@@ -1011,17 +1021,16 @@ def update_parser(parser):
     return parser.parse_known_args()
 
 
-
+FLAGS, UNPARSED = update_parser(argparse.ArgumentParser())
+print("FLAGS", FLAGS)
+print("UNPARSED", UNPARSED)
+FLAGS.weighted_sampling = False  # True  #
 
 # %%
-if __name__ == '__main__':
-    FLAGS, UNPARSED = update_parser(argparse.ArgumentParser())
-    print("FLAGS", FLAGS)
-    print("UNPARSED", UNPARSED)
-    FLAGS.weighted_sampling = False  # True  #
+if __name__ == '__main__':    
     # random seed for the mnist iterator
     np.random.seed(RANDOM_SEED)  # pylint: disable=no-member
-    DATA = md.get_data(220000, 20000, 20000, FLAGS.weighted_sampling, dataset_name='MORT', stratified_flag = FLAGS.stratified_flag, refNorm=False)  # 'MNIST')
+    DATA = md.get_data(220000, 20000, 20000, FLAGS.weighted_sampling, dataset_name='MORT', stratified_flag = FLAGS.stratified_flag, refNorm=True)  # 'MNIST')
     # print(DATA.validation.labels.sum(axis=0))
     # main(1)
     # print("before tf.app.run(...)")    
@@ -1049,3 +1058,4 @@ if __name__ == '__main__':
 
 # Very useful blog on imbalanced data:
 # http://www.kdnuggets.com/2016/08/learning-from-imbalanced-classes.html
+

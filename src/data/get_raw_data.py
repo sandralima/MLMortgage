@@ -11,10 +11,13 @@ import vertica_python as vp
 import sys
 import gc
 
+from inspect import getsourcefile
+from os.path import abspath
 
-ECON_DIR = os.path.join(Path(os.getcwd()).parents[1], 'data', 'raw', 'chunks') 
-DYNAMIC_DIR = os.path.join(Path(os.getcwd()).parents[1], 'data', 'raw', 'chunks') 
-RAW_DIR = os.path.join(Path(os.getcwd()).parents[1], 'data', 'raw') 
+
+ECON_DIR = os.path.join(Path(abspath(getsourcefile(lambda:0))).parents[2], 'data', 'raw', 'chunks') 
+DYNAMIC_DIR = os.path.join(Path(abspath(getsourcefile(lambda:0))).parents[2], 'data', 'raw', 'chunks') 
+RAW_DIR = os.path.join(Path(abspath(getsourcefile(lambda:0))).parents[2], 'data', 'raw') 
 DT_FLOAT = np.float32  # pylint: disable=no-member
 DT_BOOL = np.uint8
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -213,12 +216,12 @@ def main(project_dir):
     logger.info('Retrieving DataFrame from Raw Data, Data Sampling')
     
     # make some tests:
-    conn = vertica_connection()
+    # conn = vertica_connection()
     # df_LML = pd.read_sql_query("select * from Servicing_LLMA2.LoanMaster limit 10000000", conn) # the fetch operation fails and chuncksize doesn't work.
-    execute_query(conn, "select * from Servicing_LLMA2.LoanMaster limit 500", "LoanMaster")
-    execute_query(conn, "select * from Servicing_LLMA2.LoanDynamic limit 500", "LoanDynamic")
-    df_LM = retrieve_df_from_csv(RAW_DIR, "LoanMaster.csv")
-    all_data = read_df(45)
+    # execute_query(conn, "select * from Servicing_LLMA2.LoanMaster limit 500", "LoanMaster")
+    # execute_query(conn, "select * from Servicing_LLMA2.LoanDynamic limit 500", "LoanDynamic")
+    # df_LM = retrieve_df_from_csv(RAW_DIR, "LoanMaster.csv")
+    # all_data = read_df(45)
     
 #    df_InvCod = execute_query(conn, "select * from Servicing_LLMA2.InvestorCode_Typelookup")
 #    lt = 'U'

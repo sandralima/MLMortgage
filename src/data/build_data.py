@@ -23,6 +23,9 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(leve
 logger = logging.getLogger(__name__)
 # logger.propagate = False # it will not log to console.
 
+RAW_DIR = os.path.join(Path(abspath(getsourcefile(lambda:0))).parents[2], 'data', 'raw') 
+
+
 def drop_descrip_cols(data):
     '''Exclude from the dataset 'data' the following descriptive columns :
              to_exclude = [
@@ -329,6 +332,29 @@ def get_datasets(data, train_num, valid_num, test_num, weight_flag=False, strati
         logger.info('Test labels shape: ' + str(test[1].shape))
         return train, valid, test, data_df.columns.values.tolist()
 
+def allfeatures_preprocessing(raw_dir, file_name, chunksize=500000, refNorm=True):
+    
+    for chunk in pd.read_csv(os.path.join(RAW_DIR, raw_dir, file_name+'-{:d}.csv'.format(chunk_ind)), chunksize = chunksize, sep=',', low_memory=False):    
+        # Dropping paid-off and REO loans.
+        drop_paidoff_reo(data)    
+        drop_descrip_cols(data_df)
+        print('Droppping low-variation variables.....')
+        drop_low_variation(data_df, None)        
+        print('Getting the numeric labels...')        
+    
+        labels = oneHotEncoder_np(labels_df)    
+        
+        if (refNorm==True):
+            print('Reformating and normalizing the data.....')
+            data = reformat(data_df)
+            data = normalize(data)
+            logger.name = 'get_datasets'       
+        
+        chunk.to_csv(os.path.join(RAW_DIR, raw_dir, dynamic_fname+'-STATIC-IT-{:d}.csv'.format(chunk_ind)), mode='a')    
+        
+        if df.isnull().any().any(): exception('There are null values...')
+        
+ 
 
 def read_data_sets(num_examples, valid_num, test_num, weight_flag=False, stratified_flag=False, refNorm=True):
     """load the notMNIST dataset and apply get_datasets(...) function.    
@@ -363,11 +389,12 @@ def main(project_dir):
     """   
     logger.name ='__main__'     
     logger.info('Retrieving DataFrame from Raw Data, Data Sampling')
-    all_data = grd.read_df(45)   
-    all_data['LLMA2_APPVAL_LT_SALEPRICE'] = reformat(all_data['LLMA2_APPVAL_LT_SALEPRICE'], typ=DT_BOOL)
+    #all_data = grd.read_df(45)   
+    #all_data['LLMA2_APPVAL_LT_SALEPRICE'] = reformat(all_data['LLMA2_APPVAL_LT_SALEPRICE'], typ=DT_BOOL)
     # s_data = grd.stratified_sample_data(all_data, 0.2)        
     # DATA = read_data_sets(220000, 20000, 20000, refNorm=False)
     # print(DATA.feature_columns)
+    allfeatures_preprocessing()
         
 
 

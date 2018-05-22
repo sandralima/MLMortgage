@@ -23,9 +23,11 @@ import make_dataset as md
 
 import numpy as np
 import tensorflow as tf
+from tensorboard import summary as summary_lib
 from tensorflow.examples.tutorials.mnist import input_data
 from tensorflow.python.client import timeline
 from tensorflow.python.framework import ops
+from sklearn import metrics
 
 # import mort_data
 
@@ -433,6 +435,9 @@ def get_auc(labels, scores, hist_flag, name):
                 name=scope)
         ops.add_to_collections(ops.GraphKeys.UPDATE_OPS, update_op)
         # print(update_op.name)
+        # print(auc) # it doesn't work because FailedPreconditionError (see above for traceback): Attempting to use uninitialized value metrics/auc/0//hist_accumulate/hist_true_acc
+        # aucp = tf.Print(auc,[auc], message='AUC the label: ' + class_) # it doesnt work because it doesnt run in a session
+        # print(aucp)
         return auc
 
     def get_auc_metric(labels, scores, class_, name):
@@ -458,14 +463,21 @@ def get_auc(labels, scores, hist_flag, name):
     else:
         auc_func = get_auc_metric
     with tf.name_scope(name) as scope:
-        return tf.stack( # Pack along first dim
-            [
+        # for ind, class_ in enumerate(classes):            
+        #    aucp = auc_func(labels, scores, class_, str(ind))
+            # tf.Print(aucp)
+        aucv = [
                 auc_func(labels, scores, class_, str(ind))
-                for ind, class_ in enumerate(classes)
-            ],
+                for ind, class_ in enumerate(classes) # pair (index ej. 0, value ej. '0')
+               ]      
+        auc_values = tf.stack( # Pack along first dim
+            aucv,
             axis=0,
             name=scope)
-        # return auc_func(labels, scores, '0', scope)
+        # aucv = tf.Print(auc_values,[auc_values], message='AUC for all labels: ')
+        # print(aucv) # or maybe aucv.eval() or var = tf.Variable(aucv) and then var.eval(session=sess), or ovar = sess.run(var) but Attempting to use uninitialized value metrics/auc/Variable
+        return auc_values
+    
 
 # conf_mtx = get_confusion_matrix(labels_int, predictions, len(classes), 'metrics/confusion')
 def get_confusion_matrix(labels_int, predictions, num_classes, name):
@@ -528,6 +540,49 @@ def get_m_hand(labels, scores, name):
         return tf.stack(temp_array, axis=0, name=main_scope) # Stacks a list of rank-R tensors into one rank-(R+1) tensor.
 
 
+
+
+def get_auc_pr_curve(labels, scores, name, num_thresholds):    
+    with tf.name_scope(name) as scope:                             
+        AUC_PR = []
+        for i in range(7):  
+            data, update_op = tf.contrib.metrics.precision_recall_at_equal_thresholds(
+                            name='pr_data',
+                            predictions=scores[:, i],
+                            labels=tf.cast(labels[:, i], tf.bool),
+                            num_thresholds=num_thresholds)
+            ops.add_to_collections(ops.GraphKeys.UPDATE_OPS, update_op)
+        
+            summary_lib.pr_curve_raw_data_op(
+                                name='curve',
+                                true_positive_counts=data.tp,
+                                false_positive_counts=data.fp,
+                                true_negative_counts=data.tn,
+                                false_negative_counts=data.fn,
+                                precision=data.precision,
+                                recall=data.recall,
+                                num_thresholds=num_thresholds,
+                                display_name='Precision-Recall Curve',
+                                description='Predictions must be in the range [0-1]')
+    
+            summary_lib.scalar(
+                                'f1_max',
+                                tf.reduce_max(
+                                    2.0 * data.precision * data.recall / tf.maximum(
+                                        data.precision + data.recall, 1e-7)))
+            
+            # AUC_PR.append(metrics.auc(tf.stack(data.recall), tf.stack(data.precision)))   # we cant use sklearn with tensorflow definition!
+            auc, update_op = tf.metrics.auc(scores[:, i], labels[:, i], num_thresholds=num_thresholds, curve='PR')
+            ops.add_to_collections(ops.GraphKeys.UPDATE_OPS, update_op)
+            AUC_PR.append(auc)
+            
+        return tf.stack( # Pack along first dim
+            AUC_PR,
+            axis=0,
+            name=scope)
+    
+    
+
 def calculate_metrics(labels, logits):
     """Evaluate the quality of the logits at predicting the label.
 
@@ -553,7 +608,10 @@ def calculate_metrics(labels, logits):
     accuracy = get_accuracy(labels_int, logits, 'metrics/accuracy')    
     conf_mtx = get_confusion_matrix(labels_int, predictions,
                                     len(classes), 'metrics/confusion')
-    return accuracy, conf_mtx, auc, m_list
+    pr_auc = get_auc_pr_curve(labels, probs, 'metrics/pr_curve', 200)
+    
+    # this is for the definition of the graph:
+    return accuracy, conf_mtx, auc, m_list, labels_int, predictions, probs, pr_auc
 
 
 def add_hidden_layers(features, architecture, act=tf.nn.relu):
@@ -619,7 +677,7 @@ def build_graph(architecture, learning_rate):
         logits = inference(features, architecture) #makes all processing from input (features) to output (nn_layer) but with tf.placeholders
         loss = calculate_loss(labels, logits, example_weights)
         # Accuracy is only for reporting purposes, won't be used to train.
-        accuracy, conf_mtx, auc_list, m_list = calculate_metrics(
+        accuracy, conf_mtx, auc_list, m_list, labels_int, predictions, probs, pr_auc  = calculate_metrics(
             labels, logits)
         train(loss, learning_rate)
         with tf.name_scope('0_performance'):
@@ -632,6 +690,7 @@ def build_graph(architecture, learning_rate):
             tf.summary.scalar('2auc', tf.reduce_mean(auc_list))
             tf.summary.scalar('3m_measure', tf.reduce_mean(m_list))
             tf.summary.scalar('4loss', loss)
+            tf.summary.scalar('5pr-auc', tf.reduce_mean(pr_auc))
         initialize()
         # print(ops.get_collection(ops.GraphKeys.LOCAL_VARIABLES))
         # FLAGS.reset_op = [
@@ -740,7 +799,8 @@ def reshape_m_mtx(mtx):
 
 def print_stats(stats, name):
     """Print the given stats."""
-    conf_mtx, acc, auc_list, m_mtx_list = stats
+    conf_mtx, acc, auc_list, m_mtx_list, labels_int, predictions, probs, pr_auc = stats
+    
     conf_mtx = conf_mtx / conf_mtx.sum(axis=1, keepdims=True)
     m_mtx = reshape_m_mtx(m_mtx_list)
     print(
@@ -781,14 +841,24 @@ def get_metrics(sess, mode):
     """Get the accuracy over the dataset corresponding to the given mode."""
     feed_dict = create_feed_dict(mode, DATA, FLAGS)
     reset_and_update(sess, feed_dict)
-    return sess.run(
+    
+    metrics = sess.run(
         [
             'metrics/confusion/SparseTensorDenseAdd:0',
-            'metrics/accuracy:0',
-            'metrics/auc:0',
+            'metrics/accuracy:0', 
+            'metrics/auc:0', # 'metrics/auc/0/auc:0', # this is for showing the first position of array!!
             'metrics/m_measure:0',
-        ],
-        feed_dict=feed_dict)
+            'metrics/intlabels:0',
+            'metrics/predictions:0',
+            'metrics/probs:0',
+            'metrics/pr_curve:0',            
+        ],    
+        feed_dict=feed_dict)    
+    #pmetrics = tf.Print(metrics, [metrics], message='Metrics: ')
+    # print(pmetrics.eval(Session=sess))
+    print(metrics)
+    # output = sess.run('input_normalization/9_softmax_linear', feed_dict=feed_dict)
+    return metrics
 
 
 def train_and_summarize(sess, writers, step):
@@ -912,7 +982,7 @@ def main(_):
 
     # Hyperparameters
     #print("FLAGS.epoch_num", FLAGS.epoch_num)
-    FLAGS.epoch_num = 2  # 14  # 17  # 35  # 15
+    FLAGS.epoch_num = 10  # 14  # 17  # 35  # 15
     #print("FLAGS.epoch_num", FLAGS.epoch_num)
     FLAGS.batch_size = 256  # do NOT increase this to 1024 # 64  # 128  #
     FLAGS.dropout_keep = 0.9  # 0.9  # 0.95  # .75  # .6

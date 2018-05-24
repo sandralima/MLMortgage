@@ -12,6 +12,12 @@ import os
 from dotenv import find_dotenv, load_dotenv
 import data_classes
 import datetime
+import glob
+from os.path import abspath
+from pathlib import Path
+from inspect import getsourcefile
+from datetime import datetime
+
 
 from sklearn.preprocessing import QuantileTransformer
 from sklearn.preprocessing import OneHotEncoder
@@ -56,6 +62,23 @@ def drop_descrip_cols(data):
     data.drop(to_exclude, axis=1, inplace=True)
     logger.info('...Descriptive columns Excluded from dataset...')
     return None
+
+
+def allfeatures_drop_cols(data, columns):
+    '''Exclude from the dataset 'data' the descriptive columns as parameters.
+        Args: 
+            data (DataFrame): Input Dataset which is modified in place.
+        Returns: 
+            None
+        Raises:        
+    '''
+    logger.name = 'allfeatures_drop_cols'    
+    data.drop(columns, axis=1, inplace=True)
+    logger.info('...Columns Excluded from dataset...')
+    return None
+
+         
+        
     
 def drop_low_variation(data, low_freq_cols=None):    
     '''Exclude the columns not showing enough population variation. 
@@ -134,6 +157,18 @@ def extract_numeric_labels(data, label_column='MBA_DELINQUENCY_STATUS_next'):
     logger.info('Size of the dataset after extract_labels:' + str(data.shape))
     return labels
 
+def allfeatures_extract_labels(data, columns='MBA_DELINQUENCY_STATUS_next'):
+     logger.name = 'allfeatures_extract_labels'
+     if (type(columns)==str):
+         indices = [i for i, elem in enumerate(data.columns) if columns in elem]
+     else:
+        indices =  columns 
+        
+     if indices:
+         labels = data[data.columns[indices]]
+         data.drop(data.columns[indices], axis=1, inplace=True)    
+         return labels
+     else: return None
 
 def oneHotEncoder_np(column, typ=DT_FLOAT):
     ''' Encode categorical integer features using a one-hot aka one-of-K scheme from numpy library.
@@ -224,7 +259,7 @@ def normalize(data):
     return normalizer.fit_transform(data)
 
 
-def oneHotDummies_column(column):
+def oneHotDummies_column(column, categories):
     '''Convert categorical variable into dummy/indicator variables.
     
     Args: 
@@ -233,7 +268,12 @@ def oneHotDummies_column(column):
         DataFrame. Integer Sparse binary matrix of categorical features.
     Raises:        
     '''    
-    return pd.get_dummies(column)
+    logger.name = 'oneHotDummies_column: ' +  column.name
+    cat_column = pd.Categorical(column.astype('str'), categories=categories)
+    cat_column = pd.get_dummies(cat_column)
+    print(cat_column.columns[cat_column.isna().any()].tolist())
+    cat_column = cat_column.add_prefix(column.name + '_')
+    return cat_column
     
 
 def encode_binary_to_labeled_column(sparse_data):
@@ -332,29 +372,203 @@ def get_datasets(data, train_num, valid_num, test_num, weight_flag=False, strati
         logger.info('Test labels shape: ' + str(test[1].shape))
         return train, valid, test, data_df.columns.values.tolist()
 
-def allfeatures_preprocessing(raw_dir, file_name, chunksize=500000, refNorm=True):
+
+def drop_invalid_delinquency_status(data, gflag):      
+    delinq_ids =  data[data['MBA_DELINQUENCY_STATUS'].isin(['S', 'T', 'X', 'Z'])]['LOAN_ID']
+    groups = data[data['LOAN_ID'].isin(delinq_ids)][['LOAN_ID', 'PERIOD', 'MBA_DELINQUENCY_STATUS', 'DELINQUENCY_STATUS_NEXT']].groupby('LOAN_ID') 
+    groups_list = list(groups)
     
-    for chunk in pd.read_csv(os.path.join(RAW_DIR, raw_dir, file_name+'-{:d}.csv'.format(chunk_ind)), chunksize = chunksize, sep=',', low_memory=False):    
-        # Dropping paid-off and REO loans.
-        drop_paidoff_reo(data)    
-        drop_descrip_cols(data_df)
-        print('Droppping low-variation variables.....')
-        drop_low_variation(data_df, None)        
-        print('Getting the numeric labels...')        
+    iuw= pd.Index([]) # inmutable data structure
     
-        labels = oneHotEncoder_np(labels_df)    
+    if gflag != '':            
+        iuw= iuw.union(groups.get_group(gflag).index[0:])
+                
+    if data.iloc[-1]['LOAN_ID'] in groups.groups.keys(): # data.iloc[-1]['LOAN_ID']  == groups_list[len(groups_list)-1][1].iloc[-1]['LOAN_ID']:
+        gflag = data.iloc[-1]['LOAN_ID']
+    else:
+        gflag = ''
+            
+    # i= 0
+    # last_group= len(groups)-1
+    for k, group in groups_list: # [1:]: # (len(groups_list)-1)]:
+    #for i, k in zip(range(1, len(groups)), groups.groups.keys()[1:]): # group is a DataFrame
+        # print(name) # the whole composed index column: ('LOAN_ID', 'MBA_DELINQUENCY_STATUS_next')
+        # group = group.sort_values(by=['ASOFMONTH'], ascending=[1])            
+        # group = groups.get_group(k)        
+        li= group.index[(group['MBA_DELINQUENCY_STATUS'] =='S') | (group['MBA_DELINQUENCY_STATUS'] =='T') 
+                         | (group['MBA_DELINQUENCY_STATUS'] =='X') | (group['MBA_DELINQUENCY_STATUS'] =='Z')].tolist()
+        #        myseries[myseries == 7].index[0]
+        # if li:
+        iuw= iuw.union(group.index[group.index.get_loc(li[0]):])        
+                #if i == last_group:
+                #    gflag= True
+        # i+= 1
+        
+    if iuw!=[]:                        
+        data.drop(iuw, inplace=True) #the function update the dataframe inplace.        
+        
+    return gflag
+
+
+def allfeatures_prepro_file(file_path, train_num, valid_num, test_num, dividing='percentage', chunksize=500000, refNorm=True, label='DELINQUENCY_STATUS_NEXT'):
+    descriptive_cols = [
+        'LOAN_ID',
+        'ASOFMONTH',        
+        'PERIOD_NEXT',
+        'MOD_PER_FROM',
+        'MOD_PER_TO',
+        'PROPERTY_ZIP',
+        'INVALID_TRANSITIONS'
+        ]
+        
+    numeric_cols = ['MBA_DAYS_DELINQUENT', 'MBA_DAYS_DELINQUENT_NAN',
+       'CURRENT_INTEREST_RATE', 'CURRENT_INTEREST_RATE_NAN', 'LOANAGE', 'LOANAGE_NAN',
+       'CURRENT_BALANCE', 'CURRENT_BALANCE_NAN', 'SCHEDULED_PRINCIPAL',
+       'SCHEDULED_PRINCIPAL_NAN', 'SCHEDULED_MONTHLY_PANDI',
+       'SCHEDULED_MONTHLY_PANDI_NAN', 
+       'LLMA2_CURRENT_INTEREST_SPREAD', 'LLMA2_C_IN_LAST_12_MONTHS',
+       'LLMA2_30_IN_LAST_12_MONTHS', 'LLMA2_60_IN_LAST_12_MONTHS',
+       'LLMA2_90_IN_LAST_12_MONTHS', 'LLMA2_FC_IN_LAST_12_MONTHS',
+       'LLMA2_REO_IN_LAST_12_MONTHS', 'LLMA2_0_IN_LAST_12_MONTHS',
+       'LLMA2_HIST_LAST_12_MONTHS_MIS', 
+       'NUM_MODIF', 'NUM_MODIF_NAN', 'P_RATE_TO_MOD', 'P_RATE_TO_MOD_NAN', 'MOD_RATE',
+       'MOD_RATE_NAN', 'DIF_RATE', 'DIF_RATE_NAN', 'P_MONTHLY_PAY',
+       'P_MONTHLY_PAY_NAN', 'MOD_MONTHLY_PAY', 'MOD_MONTHLY_PAY_NAN',
+       'DIF_MONTHLY_PAY', 'DIF_MONTHLY_PAY_NAN', 'CAPIATLIZATION_AMT',
+       'CAPIATLIZATION_AMT_NAN', 'MORTGAGE_RATE', 'MORTGAGE_RATE_NAN',
+       'FICO_SCORE_ORIGINATION', 'INITIAL_INTEREST_RATE', 'ORIGINAL_LTV',
+       'ORIGINAL_BALANCE', 'BACKEND_RATIO', 'BACKEND_RATIO_NAN',
+       'ORIGINAL_TERM', 'ORIGINAL_TERM_NAN', 'SALE_PRICE', 'SALE_PRICE_NAN', 	   
+       'PREPAY_PENALTY_TERM', 'PREPAY_PENALTY_TERM_NAN', 
+	   'NUMBER_OF_UNITS', 'NUMBER_OF_UNITS_NAN', 'MARGIN',
+       'MARGIN_NAN', 'PERIODIC_RATE_CAP', 'PERIODIC_RATE_CAP_NAN',
+       'PERIODIC_RATE_FLOOR', 'PERIODIC_RATE_FLOOR_NAN', 'LIFETIME_RATE_CAP',
+       'LIFETIME_RATE_CAP_NAN', 'LIFETIME_RATE_FLOOR',
+       'LIFETIME_RATE_FLOOR_NAN', 'RATE_RESET_FREQUENCY',
+       'RATE_RESET_FREQUENCY_NAN', 'PAY_RESET_FREQUENCY',
+       'PAY_RESET_FREQUENCY_NAN', 'FIRST_RATE_RESET_PERIOD',
+       'FIRST_RATE_RESET_PERIOD_NAN', 	   
+	   'LLMA2_PRIME',
+       'LLMA2_SUBPRIME', 'LLMA2_APPVAL_LT_SALEPRICE', 'LLMA2_ORIG_RATE_SPREAD',
+       'AGI', 'AGI_NAN', 'UR', 'UR_NAN']
+        
+    nan_cols = {'MBA_DAYS_DELINQUENT': 0, 'CURRENT_INTEREST_RATE': 0, 'LOANAGE': 0,
+                'CURRENT_BALANCE' : 0, 'SCHEDULED_PRINCIPAL': 0, 'SCHEDULED_MONTHLY_PANDI': 0,       
+                'LLMA2_CURRENT_INTEREST_SPREAD': 0, 'NUM_MODIF': 0, 'P_RATE_TO_MOD': 0, 'MOD_RATE': 0,
+                'DIF_RATE': 0, 'P_MONTHLY_PAY': 0, 'MOD_MONTHLY_PAY': 0, 'DIF_MONTHLY_PAY': 0, 'CAPIATLIZATION_AMT': 0,
+                'MORTGAGE_RATE': 0, 'FICO_SCORE_ORIGINATION': 0, 'INITIAL_INTEREST_RATE': 0, 'ORIGINAL_LTV': 0,
+                'ORIGINAL_BALANCE': 0, 'BACKEND_RATIO': 0, 'ORIGINAL_TERM': 0, 'SALE_PRICE': 0, 'PREPAY_PENALTY_TERM': 0,
+                'NUMBER_OF_UNITS': 0, 'MARGIN': 0, 'PERIODIC_RATE_CAP': 0, 'PERIODIC_RATE_FLOOR': 0, 'LIFETIME_RATE_CAP': 0,
+                'LIFETIME_RATE_FLOOR': 0, 'RATE_RESET_FREQUENCY': 0, 'PAY_RESET_FREQUENCY': 0,
+                'FIRST_RATE_RESET_PERIOD': 0, 'LLMA2_ORIG_RATE_SPREAD': 0, 'AGI': 0, 'UR': 0,
+                'LLMA2_C_IN_LAST_12_MONTHS': 0, 'LLMA2_30_IN_LAST_12_MONTHS': 0, 'LLMA2_60_IN_LAST_12_MONTHS': 0,
+                'LLMA2_90_IN_LAST_12_MONTHS': 0, 'LLMA2_FC_IN_LAST_12_MONTHS': 0,
+                'LLMA2_REO_IN_LAST_12_MONTHS': 0, 'LLMA2_0_IN_LAST_12_MONTHS': 0}
+        
+    categorical_cols = {'MBA_DELINQUENCY_STATUS':  ['0','3','6','9','C','F','R'], 'DELINQUENCY_STATUS_NEXT': ['0','3','6','9','C','F','R'],  #,'S','T','X'
+                           'BUYDOWN_FLAG': ['N','U','Y'], 'NEGATIVE_AMORTIZATION_FLAG': ['N','U','Y'], 'PREPAY_PENALTY_FLAG': ['N','U','Y'],
+                           'OCCUPANCY_TYPE': ['1','2','3','U'], 'PRODUCT_TYPE': ['10','20','30','40','50','51','52','53','54','5A','5Z',
+                                            '60','61','62','63','6Z','70','80','81','82','83','84','8Z','U'], 
+                           'PROPERTY_TYPE': ['1','2','3','4','5','6','7','8','9','M','U','Z'], 'LOAN_PURPOSE_CATEGORY': ['P','R','U'], 
+                           'DOCUMENTATION_TYPE': ['1','2','3','U'], 'CHANNEL': ['1','2','3','4','5','6','7','8','9','A','B','C','D','U'], 
+                           'LOAN_TYPE': ['1','2','3','4','5','6','U'], 'IO_FLAG': ['N','U','Y'], 
+                           'CONVERTIBLE_FLAG': ['N','U','Y'], 'POOL_INSURANCE_FLAG': ['N','U','Y'], 'STATE': ['AK', 'AL', 'AR', 'AZ', 'CA', 'CO',
+                                               'CT', 'DC', 'DE', 'FL', 'GA', 'HI', 'IA', 'ID', 'IL', 'IN', 'KS', 'KY', 'LA', 'MA', 
+                                               'MD', 'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH', 'NJ', 'NM', 'NV', 
+                                               'NY', 'OH', 'OK', 'OR', 'PA', 'PR', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 
+                                               'WA', 'WI', 'WV', 'WY'], 
+                           'CURRENT_INVESTOR_CODE': ['240', '250', '253', 'U']}
+      
+    time_cols = ['YEAR', 'MONTH', 'PERIOD'] #no nan values        
+    gflag = ''
+    # hdf = pd.HDFStore(file_path[:-4] +'-pp.h5')
+
+    for chunk in pd.read_csv(file_path, chunksize = chunksize, sep=',', low_memory=False):    
+        chunk.columns = chunk.columns.str.upper()                
+        
+        # DELINQUENCY_STATUS_NEXT==Nan --> 'drop_rows'
+        # chunk = chunk[chunk[label].notna()]    
+        #df.query('line_race != 0')
+        chunk.drop(chunk.index[chunk[label].isnull()], axis=0, inplace=True)
+        chunk.drop(chunk.index[chunk['INVALID_TRANSITIONS']==1], axis=0, inplace=True)        
+        # chunk = chunk.reset_index(drop=True)     
+        gflag = drop_invalid_delinquency_status(chunk, gflag)
+        chunk = chunk.reset_index(drop=True)
+        
+        chunk.fillna(value=nan_cols, inplace=True)
+        print(chunk.columns[chunk.isna().any()].tolist())
+        
+        for k,v in categorical_cols.items():
+            new_cols = oneHotDummies_column(chunk[k], v)
+            chunk[new_cols.columns] = new_cols
+            print(chunk[new_cols.columns].columns[chunk[new_cols.columns].isna().any()].tolist())
+            
+        allfeatures_drop_cols(chunk, descriptive_cols)        
+        allfeatures_drop_cols(chunk, time_cols)
+        allfeatures_drop_cols(chunk, categorical_cols.keys())
+        
+        if chunk.isnull().any().any(): raise ValueError('There are null values...File: ' + file_path)   
+                
+        
+        for _ in range(4):
+            chunk = chunk.sample(frac=1, axis=0, replace=False)    
+        logger.info('sampled data shuffling with non replacement by 4 times')                  
+        
+        chunk.to_csv(file_path[:-4] +'-pp.csv', mode='a', index=False)    
+                
+        labels = allfeatures_extract_labels(chunk, columns=label)
         
         if (refNorm==True):
-            print('Reformating and normalizing the data.....')
-            data = reformat(data_df)
-            data = normalize(data)
-            logger.name = 'get_datasets'       
+            print('Reformating and normalizing the data.....')                                                
+#            if 'labels_cols' not in hdf.keys(): #it doesnt allow numpy arrays to append. Use h5py instead
+#                label_cols = labels.columns.values
+#                hdf.put('labels_cols', label_cols)
+#            
+#            labels = reformat(labels)
+#            if 'labels' not in hdf.keys():
+#                hdf.put('labels', labels) # format='table',
+#            else:
+#                hdf.append('labels', labels) # format='table',    
+#             
+#            if 'features_cols' not in hdf.keys():
+#                feature_cols = chunk.columns.values
+#                hdf.put('features_cols', feature_cols)   
+
+            # chunk[chunk.columns.difference(chunk.columns[indices])] = reformat(chunk[chunk.columns.difference(chunk.columns[indices])])
+            # chunk[chunk.columns.difference(chunk.columns[indices])] = normalize(chunk[chunk.columns.difference(chunk.columns[indices])])             
+            feature_cols = chunk.columns.values
+            chunk = reformat(chunk)
+            chunk = normalize(chunk)
+#            if 'features' not in hdf.keys():
+#                hdf.put('features', chunk) # format='table',
+#            else:
+#                hdf.append('features', chunk) # format='table',
+            chunk = pd.DataFrame(chunk, columns=feature_cols)
+        # chunk.to_hdf(file_path[:-4] +'-pp.h5', key='features', mode='a', append=True)
+        # labels.to_hdf(file_path[:-4] +'-pp.h5', key='labels', mode='a', append=True)
         
-        chunk.to_csv(os.path.join(RAW_DIR, raw_dir, dynamic_fname+'-STATIC-IT-{:d}.csv'.format(chunk_ind)), mode='a')    
+        total_rows = chunk.shape[0]
+        if dividing == 'percentage':            
+            valid_num = round(total_rows*(valid_num/100),0)
+            test_num = round(total_rows*(test_num/100),0)
+            train_num = total_rows - (valid_num + test_num)
         
-        if df.isnull().any().any(): exception('There are null values...')
+        chunk[:train_num, ].to_hdf(file_path[:-4] +'-pp.h5', key='train\features', mode='a', append=True)
+        labels[:train_num, ].to_hdf(file_path[:-4] +'-pp.h5', key='train\labels', mode='a', append=True)     
         
- 
+        chunk[train_num:train_num + valid_num, ].to_hdf(file_path[:-4] +'-pp.h5', key='valid\features', mode='a', append=True)
+        labels[train_num:train_num + valid_num, ].to_hdf(file_path[:-4] +'-pp.h5', key='valid\labels', mode='a', append=True)                        
+        
+        chunk[train_num + valid_num:, ].to_hdf(file_path[:-4] +'-pp.h5', key='test\features', mode='a', append=True)
+        labels[train_num + valid_num:, ].to_hdf(file_path[:-4] +'-pp.h5', key='test\labels', mode='a', append=True)                        
+                
+        # hdf.close()
+        
+        
+        
+def allfeatures_preprocessing(raw_dir, file_name, train_num, valid_num, test_num, dividing='percentage', chunksize=500000, refNorm=True):        
+    for file_path in glob.glob(os.path.join(RAW_DIR, raw_dir, file_name + "*.txt")):  
+        allfeatures_prepro_file(file_path, train_num, valid_num, test_num, dividing=dividing, chunksize=chunksize, refNorm=refNorm)          
 
 def read_data_sets(num_examples, valid_num, test_num, weight_flag=False, stratified_flag=False, refNorm=True):
     """load the notMNIST dataset and apply get_datasets(...) function.    
@@ -376,6 +590,7 @@ def read_data_sets(num_examples, valid_num, test_num, weight_flag=False, stratif
     return data_classes.Dataset(train, valid, test, feature_columns)
 
 
+
 def main(project_dir):
     """ 
     This module is in charge of::
@@ -394,7 +609,8 @@ def main(project_dir):
     # s_data = grd.stratified_sample_data(all_data, 0.2)        
     # DATA = read_data_sets(220000, 20000, 20000, refNorm=False)
     # print(DATA.feature_columns)
-    allfeatures_preprocessing()
+    allfeatures_preprocessing('chunks_all_c100th', 'temporalloandynmodifMRStaticITUR', 70, 10, 20, dividing='percentage', chunksize=50000, refNorm=True)
+    
         
 
 

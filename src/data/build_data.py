@@ -515,7 +515,7 @@ def allfeatures_prepro_file(file_path, train_num, valid_num, test_num, dividing=
         logger.info('sampled data shuffling with non replacement by 4 times')                  
         
         chunk.to_csv(file_path[:-4] +'-pp.csv', mode='a', index=False)    
-                
+        chunk = chunk.reset_index(drop=True)        
         labels = allfeatures_extract_labels(chunk, columns=label)
         
         if (refNorm==True):
@@ -549,18 +549,18 @@ def allfeatures_prepro_file(file_path, train_num, valid_num, test_num, dividing=
         
         total_rows = chunk.shape[0]
         if dividing == 'percentage':            
-            valid_num = round(total_rows*(valid_num/100),0)
-            test_num = round(total_rows*(test_num/100),0)
+            valid_num = int(round(total_rows*(valid_num/100),0))
+            test_num = int(round(total_rows*(test_num/100),0))
             train_num = total_rows - (valid_num + test_num)
         
-        chunk[:train_num, ].to_hdf(file_path[:-4] +'-pp.h5', key='train\features', mode='a', append=True)
-        labels[:train_num, ].to_hdf(file_path[:-4] +'-pp.h5', key='train\labels', mode='a', append=True)     
+        chunk.iloc[:train_num, ].to_hdf(file_path[:-4] +'-pp.h5', key='train/features', mode='a', append=True)
+        labels.iloc[:train_num, ].to_hdf(file_path[:-4] +'-pp.h5', key='train/labels', mode='a', append=True)     
         
-        chunk[train_num:train_num + valid_num, ].to_hdf(file_path[:-4] +'-pp.h5', key='valid\features', mode='a', append=True)
-        labels[train_num:train_num + valid_num, ].to_hdf(file_path[:-4] +'-pp.h5', key='valid\labels', mode='a', append=True)                        
+        chunk.iloc[train_num:train_num + valid_num, ].to_hdf(file_path[:-4] +'-pp.h5', key='valid/features', mode='a', append=True)
+        labels.iloc[train_num:train_num + valid_num, ].to_hdf(file_path[:-4] +'-pp.h5', key='valid/labels', mode='a', append=True)                        
         
-        chunk[train_num + valid_num:, ].to_hdf(file_path[:-4] +'-pp.h5', key='test\features', mode='a', append=True)
-        labels[train_num + valid_num:, ].to_hdf(file_path[:-4] +'-pp.h5', key='test\labels', mode='a', append=True)                        
+        chunk.iloc[train_num + valid_num:, ].to_hdf(file_path[:-4] +'-pp.h5', key='test/features', mode='a', append=True)
+        labels.iloc[train_num + valid_num:, ].to_hdf(file_path[:-4] +'-pp.h5', key='test/labels', mode='a', append=True)                        
                 
         # hdf.close()
         
@@ -609,7 +609,9 @@ def main(project_dir):
     # s_data = grd.stratified_sample_data(all_data, 0.2)        
     # DATA = read_data_sets(220000, 20000, 20000, refNorm=False)
     # print(DATA.feature_columns)
-    allfeatures_preprocessing('chunks_all_c100th', 'temporalloandynmodifMRStaticITUR', 70, 10, 20, dividing='percentage', chunksize=50000, refNorm=True)
+    startTime = datetime.now()
+    allfeatures_preprocessing('chunks_all_c100th', 'temporalloandynmodifMRStaticITUR', 70, 10, 20, dividing='percentage', chunksize=250000, refNorm=True)
+    print(datetime.now() - startTime)     
     
         
 

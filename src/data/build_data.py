@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 # logger.propagate = False # it will not log to console.
 
 RAW_DIR = os.path.join(Path(abspath(getsourcefile(lambda:0))).parents[2], 'data', 'raw') 
+PRO_DIR = os.path.join(Path(abspath(getsourcefile(lambda:0))).parents[2], 'data', 'processed') 
 
 
 def drop_descrip_cols(data):
@@ -167,6 +168,7 @@ def allfeatures_extract_labels(data, columns='MBA_DELINQUENCY_STATUS_next'):
      if indices:
          labels = data[data.columns[indices]]
          data.drop(data.columns[indices], axis=1, inplace=True)    
+         logger.info('...Labels extracted from Dataset...')
          return labels
      else: return None
 
@@ -270,8 +272,7 @@ def oneHotDummies_column(column, categories):
     '''    
     logger.name = 'oneHotDummies_column: ' +  column.name
     cat_column = pd.Categorical(column.astype('str'), categories=categories)
-    cat_column = pd.get_dummies(cat_column)
-    print(cat_column.columns[cat_column.isna().any()].tolist())
+    cat_column = pd.get_dummies(cat_column)    
     cat_column = cat_column.add_prefix(column.name + '_')
     return cat_column
     
@@ -373,44 +374,39 @@ def get_datasets(data, train_num, valid_num, test_num, weight_flag=False, strati
         return train, valid, test, data_df.columns.values.tolist()
 
 
-def drop_invalid_delinquency_status(data, gflag):      
+def drop_invalid_delinquency_status(data, gflag):   
+    
+    logger.name = 'drop_invalid_delinquency_status'
     delinq_ids =  data[data['MBA_DELINQUENCY_STATUS'].isin(['S', 'T', 'X', 'Z'])]['LOAN_ID']
     groups = data[data['LOAN_ID'].isin(delinq_ids)][['LOAN_ID', 'PERIOD', 'MBA_DELINQUENCY_STATUS', 'DELINQUENCY_STATUS_NEXT']].groupby('LOAN_ID') 
     groups_list = list(groups)
     
-    iuw= pd.Index([]) # inmutable data structure
+    iuw= pd.Index([])
     
-    if gflag != '':            
-        iuw= iuw.union(groups.get_group(gflag).index[0:])
+    if gflag != '': 
+        try:
+            iuw= iuw.union(groups.get_group(gflag).index[0:])
+        except  Exception  as e:
+            print(str(e))
                 
-    if data.iloc[-1]['LOAN_ID'] in groups.groups.keys(): # data.iloc[-1]['LOAN_ID']  == groups_list[len(groups_list)-1][1].iloc[-1]['LOAN_ID']:
+    if data.iloc[-1]['LOAN_ID'] in groups.groups.keys():
         gflag = data.iloc[-1]['LOAN_ID']
     else:
         gflag = ''
-            
-    # i= 0
-    # last_group= len(groups)-1
-    for k, group in groups_list: # [1:]: # (len(groups_list)-1)]:
-    #for i, k in zip(range(1, len(groups)), groups.groups.keys()[1:]): # group is a DataFrame
-        # print(name) # the whole composed index column: ('LOAN_ID', 'MBA_DELINQUENCY_STATUS_next')
-        # group = group.sort_values(by=['ASOFMONTH'], ascending=[1])            
-        # group = groups.get_group(k)        
+                
+    for k, group in groups_list: 
         li= group.index[(group['MBA_DELINQUENCY_STATUS'] =='S') | (group['MBA_DELINQUENCY_STATUS'] =='T') 
                          | (group['MBA_DELINQUENCY_STATUS'] =='X') | (group['MBA_DELINQUENCY_STATUS'] =='Z')].tolist()
-        #        myseries[myseries == 7].index[0]
-        # if li:
         iuw= iuw.union(group.index[group.index.get_loc(li[0]):])        
-                #if i == last_group:
-                #    gflag= True
-        # i+= 1
         
     if iuw!=[]:                        
-        data.drop(iuw, inplace=True) #the function update the dataframe inplace.        
+        data.drop(iuw, inplace=True) 
         
+    logger.info('invalid_delinquency_status dropped')     
     return gflag
 
 
-def allfeatures_prepro_file(file_path, train_num, valid_num, test_num, dividing='percentage', chunksize=500000, refNorm=True, label='DELINQUENCY_STATUS_NEXT'):
+def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num, test_num, dividing='percentage', chunksize=500000, refNorm=True, label='DELINQUENCY_STATUS_NEXT'):
     descriptive_cols = [
         'LOAN_ID',
         'ASOFMONTH',        
@@ -480,95 +476,96 @@ def allfeatures_prepro_file(file_path, train_num, valid_num, test_num, dividing=
                            'CURRENT_INVESTOR_CODE': ['240', '250', '253', 'U']}
       
     time_cols = ['YEAR', 'MONTH', 'PERIOD'] #no nan values        
-    gflag = ''
-    # hdf = pd.HDFStore(file_path[:-4] +'-pp.h5')
-
+    pd.set_option('io.hdf.default_format','table')
+    target_path = os.path.join(PRO_DIR, raw_dir,file_name[:-4] +'-pp.h5')
+    hdf = pd.HDFStore(target_path)
+    gflag = ''    
+    i = 1
     for chunk in pd.read_csv(file_path, chunksize = chunksize, sep=',', low_memory=False):    
+        print('chunk: ', i)
         chunk.columns = chunk.columns.str.upper()                
         
-        # DELINQUENCY_STATUS_NEXT==Nan --> 'drop_rows'
-        # chunk = chunk[chunk[label].notna()]    
-        #df.query('line_race != 0')
         chunk.drop(chunk.index[chunk[label].isnull()], axis=0, inplace=True)
         chunk.drop(chunk.index[chunk['INVALID_TRANSITIONS']==1], axis=0, inplace=True)        
-        # chunk = chunk.reset_index(drop=True)     
         gflag = drop_invalid_delinquency_status(chunk, gflag)
-        chunk = chunk.reset_index(drop=True)
-        
-        chunk.fillna(value=nan_cols, inplace=True)
-        print(chunk.columns[chunk.isna().any()].tolist())
+        chunk = chunk.reset_index(drop=True)        
+        chunk.fillna(value=nan_cols, inplace=True)   
+        logger.info('dropping invalid transitions and delinquency status, fill nan values')                  
         
         for k,v in categorical_cols.items():
             new_cols = oneHotDummies_column(chunk[k], v)
             chunk[new_cols.columns] = new_cols
-            print(chunk[new_cols.columns].columns[chunk[new_cols.columns].isna().any()].tolist())
             
         allfeatures_drop_cols(chunk, descriptive_cols)        
         allfeatures_drop_cols(chunk, time_cols)
         allfeatures_drop_cols(chunk, categorical_cols.keys())
         
-        if chunk.isnull().any().any(): raise ValueError('There are null values...File: ' + file_path)   
+        if chunk.isnull().any().any(): raise ValueError('There are null values...File: ' + file_name)   
                 
         
         for _ in range(4):
             chunk = chunk.sample(frac=1, axis=0, replace=False)    
         logger.info('sampled data shuffling with non replacement by 4 times')                  
         
-        chunk.to_csv(file_path[:-4] +'-pp.csv', mode='a', index=False)    
-        chunk = chunk.reset_index(drop=True)        
+        chunk = chunk.reset_index(drop=True)   
+        # chunk.to_csv(file_path[:-4] +'-pp.csv', mode='a', index=False) 
         labels = allfeatures_extract_labels(chunk, columns=label)
         
-        if (refNorm==True):
-            print('Reformating and normalizing the data.....')                                                
-#            if 'labels_cols' not in hdf.keys(): #it doesnt allow numpy arrays to append. Use h5py instead
-#                label_cols = labels.columns.values
-#                hdf.put('labels_cols', label_cols)
-#            
-#            labels = reformat(labels)
-#            if 'labels' not in hdf.keys():
-#                hdf.put('labels', labels) # format='table',
-#            else:
-#                hdf.append('labels', labels) # format='table',    
-#             
-#            if 'features_cols' not in hdf.keys():
-#                feature_cols = chunk.columns.values
-#                hdf.put('features_cols', feature_cols)   
-
-            # chunk[chunk.columns.difference(chunk.columns[indices])] = reformat(chunk[chunk.columns.difference(chunk.columns[indices])])
-            # chunk[chunk.columns.difference(chunk.columns[indices])] = normalize(chunk[chunk.columns.difference(chunk.columns[indices])])             
+        if (refNorm==True):            
             feature_cols = chunk.columns.values
             chunk = reformat(chunk)
             chunk = normalize(chunk)
-#            if 'features' not in hdf.keys():
-#                hdf.put('features', chunk) # format='table',
-#            else:
-#                hdf.append('features', chunk) # format='table',
-            chunk = pd.DataFrame(chunk, columns=feature_cols)
+            chunk = pd.DataFrame(chunk, columns=feature_cols, index=None)
+
         # chunk.to_hdf(file_path[:-4] +'-pp.h5', key='features', mode='a', append=True)
         # labels.to_hdf(file_path[:-4] +'-pp.h5', key='labels', mode='a', append=True)
         
         total_rows = chunk.shape[0]
         if dividing == 'percentage':            
-            valid_num = int(round(total_rows*(valid_num/100),0))
-            test_num = int(round(total_rows*(test_num/100),0))
-            train_num = total_rows - (valid_num + test_num)
+            v_num = int(round(total_rows*(float(valid_num)/100),0))
+            t_num = int(round(total_rows*(float(test_num)/100),0))
+            tr_num = total_rows - (v_num + t_num)
+        else:
+            v_num = valid_num
+            t_num = test_num
+            tr_num = train_num
         
-        chunk.iloc[:train_num, ].to_hdf(file_path[:-4] +'-pp.h5', key='train/features', mode='a', append=True)
-        labels.iloc[:train_num, ].to_hdf(file_path[:-4] +'-pp.h5', key='train/labels', mode='a', append=True)     
+#        target_path = os.path.join(PRO_DIR, raw_dir,file_name[:-4] +'-pp.h5')
+#        chunk.iloc[:tr_num, ].to_hdf(target_path, key='train/features', mode='a', format='table', append=True)
+#        labels.iloc[:tr_num, ].to_hdf(target_path, key='train/labels', mode='a', format='table', append=True)     
+#        
+#        chunk.iloc[tr_num:tr_num + v_num, ].to_hdf(target_path, key='valid/features', mode='a', format='table', append=True)
+#        labels.iloc[tr_num:tr_num + v_num, ].to_hdf(target_path, key='valid/labels', mode='a', format='table', append=True)                        
+#        
+#        chunk.iloc[tr_num + v_num:, ].to_hdf(target_path, key='test/features', mode='a', format='table', append=True)
+#        labels.iloc[tr_num + v_num:, ].to_hdf(target_path, key='test/labels', mode='a', format='table', append=True)                                                
         
-        chunk.iloc[train_num:train_num + valid_num, ].to_hdf(file_path[:-4] +'-pp.h5', key='valid/features', mode='a', append=True)
-        labels.iloc[train_num:train_num + valid_num, ].to_hdf(file_path[:-4] +'-pp.h5', key='valid/labels', mode='a', append=True)                        
+        hdf.put('train/features', chunk.iloc[:tr_num, ], append=True)
+        hdf.put('train/labels', labels.iloc[:tr_num, ], append=True)                        
         
-        chunk.iloc[train_num + valid_num:, ].to_hdf(file_path[:-4] +'-pp.h5', key='test/features', mode='a', append=True)
-        labels.iloc[train_num + valid_num:, ].to_hdf(file_path[:-4] +'-pp.h5', key='test/labels', mode='a', append=True)                        
-                
-        # hdf.close()
+        hdf.put('valid/features', chunk.iloc[tr_num:tr_num + v_num, ], append=True)
+        hdf.put('valid/labels', labels.iloc[tr_num:tr_num + v_num, ], append=True)                        
         
+        hdf.put('test/features', chunk.iloc[tr_num + v_num:, ], append=True)
+        hdf.put('test/labels', labels.iloc[tr_num + v_num:, ], append=True)                        
+                   
+        
+        logger.info('training, validation and testing set into .h5 file')    
+        del chunk
+        del labels
+        i +=  1   
+    
+    hdf.close()
+         
         
         
 def allfeatures_preprocessing(raw_dir, file_name, train_num, valid_num, test_num, dividing='percentage', chunksize=500000, refNorm=True):        
-    for file_path in glob.glob(os.path.join(RAW_DIR, raw_dir, file_name + "*.txt")):  
-        allfeatures_prepro_file(file_path, train_num, valid_num, test_num, dividing=dividing, chunksize=chunksize, refNorm=refNorm)          
+    
+    for file_path in glob.glob(os.path.join(RAW_DIR, raw_dir,"*.txt")):  
+        print('Preprocessing File: ' + file_path)
+        startTime = datetime.now()
+        allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num, test_num, dividing=dividing, chunksize=chunksize, refNorm=refNorm)          
+        print(datetime.now() - startTime)     
 
 def read_data_sets(num_examples, valid_num, test_num, weight_flag=False, stratified_flag=False, refNorm=True):
     """load the notMNIST dataset and apply get_datasets(...) function.    
@@ -608,10 +605,8 @@ def main(project_dir):
     #all_data['LLMA2_APPVAL_LT_SALEPRICE'] = reformat(all_data['LLMA2_APPVAL_LT_SALEPRICE'], typ=DT_BOOL)
     # s_data = grd.stratified_sample_data(all_data, 0.2)        
     # DATA = read_data_sets(220000, 20000, 20000, refNorm=False)
-    # print(DATA.feature_columns)
-    startTime = datetime.now()
-    allfeatures_preprocessing('chunks_all_c100th', 'temporalloandynmodifMRStaticITUR', 70, 10, 20, dividing='percentage', chunksize=250000, refNorm=True)
-    print(datetime.now() - startTime)     
+    # print(DATA.feature_columns)    
+    allfeatures_preprocessing('chunks_all_c100th', 'temporalloandynmodifMRStaticITUR', 70, 10, 20, dividing='percentage', chunksize=500000, refNorm=True)    
     
         
 
@@ -624,7 +619,7 @@ if __name__ == '__main__':
     # find .env automagically by walking up directories until it's found, then
     # load up the .env entries as environment variables
     load_dotenv(find_dotenv())
-
+    logger.propagate = False
     main(project_dir)
         
 

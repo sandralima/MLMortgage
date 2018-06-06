@@ -11,6 +11,7 @@ import logging
 import os
 from dotenv import find_dotenv, load_dotenv
 import data_classes
+import Normalizer
 import datetime
 import glob
 from os.path import abspath
@@ -20,6 +21,7 @@ from datetime import datetime
 
 
 from sklearn.preprocessing import QuantileTransformer
+from sklearn.preprocessing import RobustScaler
 from sklearn.preprocessing import OneHotEncoder
 
 DT_FLOAT = np.float32 
@@ -158,6 +160,7 @@ def extract_numeric_labels(data, label_column='MBA_DELINQUENCY_STATUS_next'):
     logger.info('Size of the dataset after extract_labels:' + str(data.shape))
     return labels
 
+
 def allfeatures_extract_labels(data, columns='MBA_DELINQUENCY_STATUS_next'):
      logger.name = 'allfeatures_extract_labels'
      if (type(columns)==str):
@@ -171,6 +174,7 @@ def allfeatures_extract_labels(data, columns='MBA_DELINQUENCY_STATUS_next'):
          logger.info('...Labels extracted from Dataset...')
          return labels
      else: return None
+
 
 def oneHotEncoder_np(column, typ=DT_FLOAT):
     ''' Encode categorical integer features using a one-hot aka one-of-K scheme from numpy library.
@@ -406,7 +410,61 @@ def drop_invalid_delinquency_status(data, gflag):
     return gflag
 
 
-def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num, test_num, dividing='percentage', chunksize=500000, refNorm=True, label='DELINQUENCY_STATUS_NEXT'):
+def custom_robust_normalizer(ncols, dist_file, normalizer_type='robust_scaler_sk', center_value='median'):            
+    norm_cols = []
+    scales = []
+    centers = []
+    for i, x in enumerate (ncols):                        
+        x_frame = dist_file.iloc[:, np.where(pd.DataFrame(dist_file.columns.values)[0].str.contains(x+'_'))[0]]    
+        if not x_frame.empty:            
+            scales.append(float(pd.to_numeric(x_frame[x+'_Q3'], errors='coerce').subtract(pd.to_numeric(x_frame[x+'_Q1'], errors='coerce'))))
+                    # x_frame[x+'_Q1'].float)))            
+            if center_value == 'median':
+                centers.append( float(x_frame[x+'_MEDIAN']) )   
+            else:
+                centers.append( float(x_frame[x+'_Q1']) )           
+            norm_cols.append(x)
+    
+    if (normalizer_type == 'robust_scaler_sk'):    
+        normalizer = RobustScaler()
+        normalizer.scale_ = scales
+        normalizer.center_ = centers        
+    elif (normalizer_type == 'percentile_scaler'):    
+        normalizer = Normalizer.Normalizer(scales, centers)     
+    else: normalizer=None                  
+    
+    return norm_cols, normalizer
+
+def custom_minmax_normalizer(ncols, scales, dist_file):    
+    norm_cols = []
+    minmax_scales = []
+    centers = []
+    to_delete =[]
+    for i, x in enumerate (ncols):  
+        if scales[i] == 0:
+            x_frame = dist_file.iloc[:, np.where(pd.DataFrame(dist_file.columns.values)[0].str.contains(x+'_'))[0]]    
+            if not x_frame.empty:            
+                minmax_scales.append(float(x_frame[x+'_MAX'].subtract(x_frame[x+'_MIN'])))                            
+                centers.append( float(x_frame[x+'_MIN']))
+                norm_cols.append(x)
+                to_delete.append(i)
+        
+    normalizer = Normalizer.Normalizer(minmax_scales, centers)         
+    
+    return norm_cols, normalizer, to_delete
+
+def imputing_nan_values(nan_dict, distribution):        
+    new_dict = {}
+    for k,v in nan_dict.items():
+        if v=='median':
+            new_dict[k] = float(distribution[k+'_MEDIAN'])    
+        else:
+            new_dict[k] = v
+            
+    return new_dict
+
+def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num, test_num, dividing='percentage', chunksize=500000, 
+                            refNorm=True, label='DELINQUENCY_STATUS_NEXT'):
     descriptive_cols = [
         'LOAN_ID',
         'ASOFMONTH',        
@@ -422,7 +480,8 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
        'CURRENT_BALANCE', 'CURRENT_BALANCE_NAN', 'SCHEDULED_PRINCIPAL',
        'SCHEDULED_PRINCIPAL_NAN', 'SCHEDULED_MONTHLY_PANDI',
        'SCHEDULED_MONTHLY_PANDI_NAN', 
-       'LLMA2_CURRENT_INTEREST_SPREAD', 'LLMA2_C_IN_LAST_12_MONTHS',
+       'LLMA2_CURRENT_INTEREST_SPREAD', 'LLMA2_CURRENT_INTEREST_SPREAD_NAN',  
+       'LLMA2_C_IN_LAST_12_MONTHS',
        'LLMA2_30_IN_LAST_12_MONTHS', 'LLMA2_60_IN_LAST_12_MONTHS',
        'LLMA2_90_IN_LAST_12_MONTHS', 'LLMA2_FC_IN_LAST_12_MONTHS',
        'LLMA2_REO_IN_LAST_12_MONTHS', 'LLMA2_0_IN_LAST_12_MONTHS',
@@ -430,13 +489,13 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
        'NUM_MODIF', 'NUM_MODIF_NAN', 'P_RATE_TO_MOD', 'P_RATE_TO_MOD_NAN', 'MOD_RATE',
        'MOD_RATE_NAN', 'DIF_RATE', 'DIF_RATE_NAN', 'P_MONTHLY_PAY',
        'P_MONTHLY_PAY_NAN', 'MOD_MONTHLY_PAY', 'MOD_MONTHLY_PAY_NAN',
-       'DIF_MONTHLY_PAY', 'DIF_MONTHLY_PAY_NAN', 'CAPIATLIZATION_AMT',
-       'CAPIATLIZATION_AMT_NAN', 'MORTGAGE_RATE', 'MORTGAGE_RATE_NAN',
+       'DIF_MONTHLY_PAY', 'DIF_MONTHLY_PAY_NAN', 'CAPITALIZATION_AMT',
+       'CAPITALIZATION_AMT_NAN', 'MORTGAGE_RATE', 'MORTGAGE_RATE_NAN',
        'FICO_SCORE_ORIGINATION', 'INITIAL_INTEREST_RATE', 'ORIGINAL_LTV',
        'ORIGINAL_BALANCE', 'BACKEND_RATIO', 'BACKEND_RATIO_NAN',
        'ORIGINAL_TERM', 'ORIGINAL_TERM_NAN', 'SALE_PRICE', 'SALE_PRICE_NAN', 	   
        'PREPAY_PENALTY_TERM', 'PREPAY_PENALTY_TERM_NAN', 
-	   'NUMBER_OF_UNITS', 'NUMBER_OF_UNITS_NAN', 'MARGIN',
+	    'NUMBER_OF_UNITS', 'NUMBER_OF_UNITS_NAN', 'MARGIN',
        'MARGIN_NAN', 'PERIODIC_RATE_CAP', 'PERIODIC_RATE_CAP_NAN',
        'PERIODIC_RATE_FLOOR', 'PERIODIC_RATE_FLOOR_NAN', 'LIFETIME_RATE_CAP',
        'LIFETIME_RATE_CAP_NAN', 'LIFETIME_RATE_FLOOR',
@@ -444,22 +503,35 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
        'RATE_RESET_FREQUENCY_NAN', 'PAY_RESET_FREQUENCY',
        'PAY_RESET_FREQUENCY_NAN', 'FIRST_RATE_RESET_PERIOD',
        'FIRST_RATE_RESET_PERIOD_NAN', 	   
-	   'LLMA2_PRIME',
+	    'LLMA2_PRIME',
        'LLMA2_SUBPRIME', 'LLMA2_APPVAL_LT_SALEPRICE', 'LLMA2_ORIG_RATE_SPREAD',
-       'AGI', 'AGI_NAN', 'UR', 'UR_NAN']
+       'LLMA2_ORIG_RATE_SPREAD_NAN', 'AGI', 'AGI_NAN', 'UR', 'UR_NAN']
         
-    nan_cols = {'MBA_DAYS_DELINQUENT': 0, 'CURRENT_INTEREST_RATE': 0, 'LOANAGE': 0,
-                'CURRENT_BALANCE' : 0, 'SCHEDULED_PRINCIPAL': 0, 'SCHEDULED_MONTHLY_PANDI': 0,       
-                'LLMA2_CURRENT_INTEREST_SPREAD': 0, 'NUM_MODIF': 0, 'P_RATE_TO_MOD': 0, 'MOD_RATE': 0,
-                'DIF_RATE': 0, 'P_MONTHLY_PAY': 0, 'MOD_MONTHLY_PAY': 0, 'DIF_MONTHLY_PAY': 0, 'CAPIATLIZATION_AMT': 0,
-                'MORTGAGE_RATE': 0, 'FICO_SCORE_ORIGINATION': 0, 'INITIAL_INTEREST_RATE': 0, 'ORIGINAL_LTV': 0,
-                'ORIGINAL_BALANCE': 0, 'BACKEND_RATIO': 0, 'ORIGINAL_TERM': 0, 'SALE_PRICE': 0, 'PREPAY_PENALTY_TERM': 0,
-                'NUMBER_OF_UNITS': 0, 'MARGIN': 0, 'PERIODIC_RATE_CAP': 0, 'PERIODIC_RATE_FLOOR': 0, 'LIFETIME_RATE_CAP': 0,
-                'LIFETIME_RATE_FLOOR': 0, 'RATE_RESET_FREQUENCY': 0, 'PAY_RESET_FREQUENCY': 0,
-                'FIRST_RATE_RESET_PERIOD': 0, 'LLMA2_ORIG_RATE_SPREAD': 0, 'AGI': 0, 'UR': 0,
-                'LLMA2_C_IN_LAST_12_MONTHS': 0, 'LLMA2_30_IN_LAST_12_MONTHS': 0, 'LLMA2_60_IN_LAST_12_MONTHS': 0,
-                'LLMA2_90_IN_LAST_12_MONTHS': 0, 'LLMA2_FC_IN_LAST_12_MONTHS': 0,
-                'LLMA2_REO_IN_LAST_12_MONTHS': 0, 'LLMA2_0_IN_LAST_12_MONTHS': 0}
+#    nan_cols = {'MBA_DAYS_DELINQUENT': 0, 'CURRENT_INTEREST_RATE': 0, 'LOANAGE': 0,
+#                'CURRENT_BALANCE' : 0, 'SCHEDULED_PRINCIPAL': 0, 'SCHEDULED_MONTHLY_PANDI': 0,       
+#                'LLMA2_CURRENT_INTEREST_SPREAD': 0, 'NUM_MODIF': 0, 'P_RATE_TO_MOD': 0, 'MOD_RATE': 0,
+#                'DIF_RATE': 0, 'P_MONTHLY_PAY': 0, 'MOD_MONTHLY_PAY': 0, 'DIF_MONTHLY_PAY': 0, 'CAPITALIZATION_AMT': 0,
+#                'MORTGAGE_RATE': 0, 'FICO_SCORE_ORIGINATION': 0, 'INITIAL_INTEREST_RATE': 0, 'ORIGINAL_LTV': 0,
+#                'ORIGINAL_BALANCE': 0, 'BACKEND_RATIO': 0, 'ORIGINAL_TERM': 0, 'SALE_PRICE': 0, 'PREPAY_PENALTY_TERM': 0,
+#                'NUMBER_OF_UNITS': 0, 'MARGIN': 0, 'PERIODIC_RATE_CAP': 0, 'PERIODIC_RATE_FLOOR': 0, 'LIFETIME_RATE_CAP': 0,
+#                'LIFETIME_RATE_FLOOR': 0, 'RATE_RESET_FREQUENCY': 0, 'PAY_RESET_FREQUENCY': 0,
+#                'FIRST_RATE_RESET_PERIOD': 0, 'LLMA2_ORIG_RATE_SPREAD': 0, 'AGI': 0, 'UR': 0,
+#                'LLMA2_C_IN_LAST_12_MONTHS': 0, 'LLMA2_30_IN_LAST_12_MONTHS': 0, 'LLMA2_60_IN_LAST_12_MONTHS': 0,
+#                'LLMA2_90_IN_LAST_12_MONTHS': 0, 'LLMA2_FC_IN_LAST_12_MONTHS': 0,
+#                'LLMA2_REO_IN_LAST_12_MONTHS': 0, 'LLMA2_0_IN_LAST_12_MONTHS': 0}
+    
+    nan_cols = {'MBA_DAYS_DELINQUENT': 'median', 'CURRENT_INTEREST_RATE': 'median', 'LOANAGE': 'median',
+                'CURRENT_BALANCE' : 'median', 'SCHEDULED_PRINCIPAL': 'median', 'SCHEDULED_MONTHLY_PANDI': 'median',       
+                'LLMA2_CURRENT_INTEREST_SPREAD': 'median', 'NUM_MODIF': 0, 'P_RATE_TO_MOD': 0, 'MOD_RATE': 0,
+                'DIF_RATE': 0, 'P_MONTHLY_PAY': 0, 'MOD_MONTHLY_PAY': 0, 'DIF_MONTHLY_PAY': 0, 'CAPITALIZATION_AMT': 0,
+                'MORTGAGE_RATE': 'median', 'FICO_SCORE_ORIGINATION': 'median', 'INITIAL_INTEREST_RATE': 'median', 'ORIGINAL_LTV': 'median',
+                'ORIGINAL_BALANCE': 'median', 'BACKEND_RATIO': 'median', 'ORIGINAL_TERM': 'median', 'SALE_PRICE': 'median', 'PREPAY_PENALTY_TERM': 'median',
+                'NUMBER_OF_UNITS': 'median', 'MARGIN': 'median', 'PERIODIC_RATE_CAP': 'median', 'PERIODIC_RATE_FLOOR': 'median', 'LIFETIME_RATE_CAP': 'median',
+                'LIFETIME_RATE_FLOOR': 'median', 'RATE_RESET_FREQUENCY': 'median', 'PAY_RESET_FREQUENCY': 'median',
+                'FIRST_RATE_RESET_PERIOD': 'median', 'LLMA2_ORIG_RATE_SPREAD': 'median', 'AGI': 'median', 'UR': 'median',
+                'LLMA2_C_IN_LAST_12_MONTHS': 'median', 'LLMA2_30_IN_LAST_12_MONTHS': 'median', 'LLMA2_60_IN_LAST_12_MONTHS': 'median',
+                'LLMA2_90_IN_LAST_12_MONTHS': 'median', 'LLMA2_FC_IN_LAST_12_MONTHS': 'median',
+                'LLMA2_REO_IN_LAST_12_MONTHS': 'median', 'LLMA2_0_IN_LAST_12_MONTHS': 'median'}
         
     categorical_cols = {'MBA_DELINQUENCY_STATUS':  ['0','3','6','9','C','F','R'], 'DELINQUENCY_STATUS_NEXT': ['0','3','6','9','C','F','R'],  #,'S','T','X'
                            'BUYDOWN_FLAG': ['N','U','Y'], 'NEGATIVE_AMORTIZATION_FLAG': ['N','U','Y'], 'PREPAY_PENALTY_FLAG': ['N','U','Y'],
@@ -477,95 +549,108 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
       
     time_cols = ['YEAR', 'MONTH', 'PERIOD'] #no nan values        
     pd.set_option('io.hdf.default_format','table')
-    target_path = os.path.join(PRO_DIR, raw_dir,file_name[:-4] +'-pp.h5')
-    hdf = pd.HDFStore(target_path)
-    gflag = ''    
-    i = 1
-    for chunk in pd.read_csv(file_path, chunksize = chunksize, sep=',', low_memory=False):    
-        print('chunk: ', i)
-        chunk.columns = chunk.columns.str.upper()                
-        
-        chunk.drop(chunk.index[chunk[label].isnull()], axis=0, inplace=True)
-        chunk.drop(chunk.index[chunk['INVALID_TRANSITIONS']==1], axis=0, inplace=True)        
-        gflag = drop_invalid_delinquency_status(chunk, gflag)
-        chunk = chunk.reset_index(drop=True)        
-        chunk.fillna(value=nan_cols, inplace=True)   
-        logger.info('dropping invalid transitions and delinquency status, fill nan values')                  
-        
-        for k,v in categorical_cols.items():
-            new_cols = oneHotDummies_column(chunk[k], v)
-            chunk[new_cols.columns] = new_cols
+    
+    dist_file = pd.read_csv(os.path.join(RAW_DIR, "percentile features2.csv"), sep=';', low_memory=False)
+    dist_file.columns = dist_file.columns.str.upper()
+    
+    ncols = [x for x in numeric_cols if x.find('NAN')<0]
+    robust_cols, robust_normalizer = custom_robust_normalizer(ncols, dist_file, center_value='quantile', normalizer_type='percentile_scaler')    
+    minmax_cols, minmax_normalizer, to_delete = custom_minmax_normalizer(robust_cols, robust_normalizer.scale_, dist_file)        
+    robust_normalizer.scale_ = np.delete(robust_normalizer.scale_,to_delete, 0)
+    robust_normalizer.center_ = np.delete(robust_normalizer.center_,to_delete, 0)
+    robust_cols = np.delete(robust_cols,to_delete, 0)            
+    
+    target_path = os.path.join(PRO_DIR, raw_dir,file_name[:-4])
+    with  pd.HDFStore(target_path +'-pp.h5') as hdf:
+        gflag = ''    
+        i = 1            
+        for chunk in pd.read_csv(file_path, chunksize = chunksize, sep=',', low_memory=False):    
+            print('chunk: ', i)
+            chunk.columns = chunk.columns.str.upper()                
             
-        allfeatures_drop_cols(chunk, descriptive_cols)        
-        allfeatures_drop_cols(chunk, time_cols)
-        allfeatures_drop_cols(chunk, categorical_cols.keys())
-        
-        if chunk.isnull().any().any(): raise ValueError('There are null values...File: ' + file_name)   
+            chunk.drop(chunk.index[chunk[label].isnull()], axis=0, inplace=True)
+            chunk.drop(chunk.index[chunk['INVALID_TRANSITIONS']==1], axis=0, inplace=True)        
+            gflag = drop_invalid_delinquency_status(chunk, gflag)
+            chunk = chunk.reset_index(drop=True)   
+            
+            nan_cols = imputing_nan_values(nan_cols, dist_file)
+            chunk.fillna(value=nan_cols, inplace=True)   
+            
+            logger.info('dropping invalid transitions and delinquency status, fill nan values')                  
+            
+            for k,v in categorical_cols.items():
+                new_cols = oneHotDummies_column(chunk[k], v)
+                chunk[new_cols.columns] = new_cols
                 
-        
-        for _ in range(4):
-            chunk = chunk.sample(frac=1, axis=0, replace=False)    
-        logger.info('sampled data shuffling with non replacement by 4 times')                  
-        
-        chunk = chunk.reset_index(drop=True)   
-        # chunk.to_csv(file_path[:-4] +'-pp.csv', mode='a', index=False) 
-        labels = allfeatures_extract_labels(chunk, columns=label)
-        
-        if (refNorm==True):            
-            feature_cols = chunk.columns.values
-            chunk = reformat(chunk)
-            chunk = normalize(chunk)
-            chunk = pd.DataFrame(chunk, columns=feature_cols, index=None)
+            allfeatures_drop_cols(chunk, descriptive_cols)        
+            allfeatures_drop_cols(chunk, time_cols)
+            allfeatures_drop_cols(chunk, categorical_cols.keys())
+            
+            if chunk.isnull().any().any(): raise ValueError('There are null values...File: ' + file_name)   
+                    
+            
+            for _ in range(4):
+                chunk = chunk.sample(frac=1, axis=0, replace=False)    
+            logger.info('sampled data shuffling with non replacement by 4 times')                  
+            
+            chunk = chunk.reset_index(drop=True)               
+            if (refNorm==True):            
+                # feature_cols = chunk.columns.values
+                # chunk = reformat(chunk)
+                # chunk = normalize(chunk)
+                # chunk = pd.DataFrame(chunk, columns=feature_cols, index=None)
+                chunk[robust_cols] = robust_normalizer.transform(chunk[robust_cols])
+                chunk[minmax_cols] = minmax_normalizer.transform(chunk[minmax_cols])            
+                # the output is not normalized!!
+                # chunk['LLMA2_ORIG_RATE_SPREAD'] = chunk['INITIAL_INTEREST_RATE'].subtract(chunk['MORTGAGE_RATE'], axis=0)
+                # chunk['LLMA2_CURRENT_INTEREST_SPREAD'] = chunk['CURRENT_INTEREST_RATE'].subtract(chunk['MORTGAGE_RATE'], axis=0)
 
-        # chunk.to_hdf(file_path[:-4] +'-pp.h5', key='features', mode='a', append=True)
-        # labels.to_hdf(file_path[:-4] +'-pp.h5', key='labels', mode='a', append=True)
+            chunk.to_csv(target_path +'-pp.csv', mode='a', index=False) 
+            labels = allfeatures_extract_labels(chunk, columns=label)
+            
+            total_rows = chunk.shape[0]
+            if dividing == 'percentage':            
+                v_num = int(round(total_rows*(float(valid_num)/100),0))
+                t_num = int(round(total_rows*(float(test_num)/100),0))
+                tr_num = total_rows - (v_num + t_num)
+            else:
+                v_num = valid_num
+                t_num = test_num
+                tr_num = train_num        
+            
+            hdf.put('train/features', chunk.iloc[:tr_num, ], append=True)
+            hdf.put('train/labels', labels.iloc[:tr_num, ], append=True)                        
+            
+            hdf.put('valid/features', chunk.iloc[tr_num:tr_num + v_num, ], append=True)
+            hdf.put('valid/labels', labels.iloc[tr_num:tr_num + v_num, ], append=True)                        
+            
+            hdf.put('test/features', chunk.iloc[tr_num + v_num:, ], append=True)
+            hdf.put('test/labels', labels.iloc[tr_num + v_num:, ], append=True)                        
+            
+            logger.info('training, validation and testing set into .h5 file')    
+            del chunk
+            del labels
+            i +=  1   
+                
+#        hdf.get_storer('train/features').attrs.train_size = hdf.get('train/features').shape[0]        
+#        hdf.get_storer('valid/features').attrs.valid_size = hdf.get('valid/features').shape[0]
+#        hdf.get_storer('test/features').attrs.test_size = hdf.get('test/features').shape[0]        
         
-        total_rows = chunk.shape[0]
-        if dividing == 'percentage':            
-            v_num = int(round(total_rows*(float(valid_num)/100),0))
-            t_num = int(round(total_rows*(float(test_num)/100),0))
-            tr_num = total_rows - (v_num + t_num)
-        else:
-            v_num = valid_num
-            t_num = test_num
-            tr_num = train_num
-        
-#        target_path = os.path.join(PRO_DIR, raw_dir,file_name[:-4] +'-pp.h5')
-#        chunk.iloc[:tr_num, ].to_hdf(target_path, key='train/features', mode='a', format='table', append=True)
-#        labels.iloc[:tr_num, ].to_hdf(target_path, key='train/labels', mode='a', format='table', append=True)     
-#        
-#        chunk.iloc[tr_num:tr_num + v_num, ].to_hdf(target_path, key='valid/features', mode='a', format='table', append=True)
-#        labels.iloc[tr_num:tr_num + v_num, ].to_hdf(target_path, key='valid/labels', mode='a', format='table', append=True)                        
-#        
-#        chunk.iloc[tr_num + v_num:, ].to_hdf(target_path, key='test/features', mode='a', format='table', append=True)
-#        labels.iloc[tr_num + v_num:, ].to_hdf(target_path, key='test/labels', mode='a', format='table', append=True)                                                
-        
-        hdf.put('train/features', chunk.iloc[:tr_num, ], append=True)
-        hdf.put('train/labels', labels.iloc[:tr_num, ], append=True)                        
-        
-        hdf.put('valid/features', chunk.iloc[tr_num:tr_num + v_num, ], append=True)
-        hdf.put('valid/labels', labels.iloc[tr_num:tr_num + v_num, ], append=True)                        
-        
-        hdf.put('test/features', chunk.iloc[tr_num + v_num:, ], append=True)
-        hdf.put('test/labels', labels.iloc[tr_num + v_num:, ], append=True)                        
-                   
-        
-        logger.info('training, validation and testing set into .h5 file')    
-        del chunk
-        del labels
-        i +=  1   
+#def get_h5_dataset(raw_dir, file_name):
+#    target_path = os.path.join(PRO_DIR, raw_dir, file_name)
+#    hdf = pd.HDFStore(target_path)
+#    return data_classes.Dataset(hdf)
+
     
-    hdf.close()
-         
-        
-        
-def allfeatures_preprocessing(raw_dir, file_name, train_num, valid_num, test_num, dividing='percentage', chunksize=500000, refNorm=True):        
-    
+
+def allfeatures_preprocessing(raw_dir, train_num, valid_num, test_num, dividing='percentage', chunksize=500000, refNorm=True):            
     for file_path in glob.glob(os.path.join(RAW_DIR, raw_dir,"*.txt")):  
         print('Preprocessing File: ' + file_path)
         startTime = datetime.now()
+        file_name = os.path.basename(file_path)
         allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num, test_num, dividing=dividing, chunksize=chunksize, refNorm=refNorm)          
-        print(datetime.now() - startTime)     
+        print('Preprocessing Time: ', datetime.now() - startTime)     
+
 
 def read_data_sets(num_examples, valid_num, test_num, weight_flag=False, stratified_flag=False, refNorm=True):
     """load the notMNIST dataset and apply get_datasets(...) function.    
@@ -600,15 +685,8 @@ def main(project_dir):
         - 
     """   
     logger.name ='__main__'     
-    logger.info('Retrieving DataFrame from Raw Data, Data Sampling')
-    #all_data = grd.read_df(45)   
-    #all_data['LLMA2_APPVAL_LT_SALEPRICE'] = reformat(all_data['LLMA2_APPVAL_LT_SALEPRICE'], typ=DT_BOOL)
-    # s_data = grd.stratified_sample_data(all_data, 0.2)        
-    # DATA = read_data_sets(220000, 20000, 20000, refNorm=False)
-    # print(DATA.feature_columns)    
-    allfeatures_preprocessing('chunks_all_c100th', 'temporalloandynmodifMRStaticITUR', 70, 10, 20, dividing='percentage', chunksize=500000, refNorm=True)    
-    
-        
+    logger.info('Retrieving DataFrame from Raw Data, Data Sampling')    
+    allfeatures_preprocessing('chunks_all_c100th', 70, 10, 20, dividing='percentage', chunksize=500000, refNorm=True)        
 
 
 
@@ -622,20 +700,3 @@ if __name__ == '__main__':
     logger.propagate = False
     main(project_dir)
         
-
-#def invalid_transition(group):    
-#    # np.dstack((arr_a, arr_b)) # doesn't work
-#    transition_chain = np.array(list(zip(data['MBA_DELINQUENCY_STATUS_next'],data['MBA_DELINQUENCY_STATUS_next'][1:])))
-#    date_diff = (data[['ASOFMONTH']].diff() <= datetime.timedelta(days=31)).values.ravel()
-#    transition_chain = transition_chain[date_diff[1:]] 
-#    invalid_transitions = np.array([[4, 2], [4, 3], [1, 3], [0, 1], [0, 2], [0, 3], [0, 4], [0, 5], [0, 6], 
-#                           [6, 0], [6, 1], [6, 2], [6, 3], [6, 4], [6, 5]])
-#    
-#    uw = []
-#    i = 0
-#    for z in range(0,len(transition_chain)):        
-#        # it doesnt work because 
-#        if (transition_chain[z] in invalid_transitions): # other cycle More long time.
-#            uw.append(i+1)
-
-# drop_invalid_delinquency_status(new_data, invalid_transition, status=None)

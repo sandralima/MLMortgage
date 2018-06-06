@@ -163,6 +163,7 @@ def merge_allfeatures(chunk_ind, raw_dir, dynamic_fname, static_fname, chunksize
     logger.info(' static shape: '
                 + str(static_data.shape) + ' Income Taxes Shape: '+ str(incomet_data.shape))
 
+
 def read_df(chunk_ind):
     '''Merge static and dynamic loan data and economic data for loans.
     
@@ -242,6 +243,7 @@ def sample_data(all_data, total_num, weight_flag=False):
     logger.info('sampled data shuffling by 4 times')
     return data_df
 
+
 def stratified_sample_data(all_data, percentage):
     '''Samples 'all_data' by stratifying method, taking a percentage for each group of 'MBA_DELINQUENCY_STATUS_next' label. 
     
@@ -264,9 +266,9 @@ def stratified_sample_data(all_data, percentage):
         data_df = data_df.sample(frac=1, axis=0, replace=False)
     logger.info('sampled data shuffling by 4 times')
     return data_df
-  
-def loan_modifications():          
+ 
     
+def loan_modifications():              
     conn = vertica_connection()
     df_LML = pd.read_sql_query("select * from Servicing_LLMA2.LoanMaster limit 10000000", conn) # the fetch operation fails and chuncksize doesn't work.
     execute_query(conn, "select * from Servicing_LLMA2.LoanMaster limit 500", "LoanMaster")
@@ -277,34 +279,21 @@ def loan_modifications():
     sql = "select * from Servicing_LLMA2.LoanModificationI as lmi, Servicing_LLMA2.LoanMaster as lm, Servicing_LLMA2.LoanDynamic as ld " \
            " where lmi.Loan_ID =  lm.Loan_ID and lm.Loan_ID = ld.Loan_ID and lmi.Mod_Period = ld.Period order by lmi.Loan_ID"
     
-#    df_InvCod = execute_query(conn, "select * from Servicing_LLMA2.InvestorCode_Typelookup")
-#    lt = 'U'
-#    df_InvCod_F = execute_query(conn, "select * from Servicing_LLMA2.InvestorCode_Typelookup where InvestorCode='" + lt + "'")
-#    df_LoanDyn = execute_query(conn, "select * from Servicing_LLMA2.LoanDynamic limit 500")    
-#    df_LoanMaster = execute_query(conn, "select * from Servicing_LLMA2.LoanMaster")    
-#    df_LoanDyn_Group = execute_query(conn, "select a.Period, count (a.Loan_ID) from Servicing_LLMA2.LoanDynamic as a group by a.Period")
 
-def calculate_AGI_STUB(x, agi_classes):
-    # return agi_classes["AGI_STUB"] if x.strip().upper()==agi_classes["DESCRIPTION"].str.strip().str.upper() else x
+def calculate_AGI_STUB(x, agi_classes):    
     ac = agi_classes["AGI_STUB"][str(x).strip().upper()==agi_classes["DESCRIPTION"].str.strip().str.upper()]
     return '0' if ac.empty else ac.iloc[0]
     
            
 def year_income_taxes(file_path, columns, col_key, year_dir, agi_classes, cols_dict):
     state_df = pd.read_excel(file_path)
-    state_df.drop(columns[col_key]['frows'], axis=0, inplace=True)            
-        # state_df[[state_df.columns[columns[col_key]['first_col']:]]].columns = columns[col_key]['cols']
-        # state_df.drop(state_df.columns[:columns[col_key]['first_col']], axis=1, inplace=True)    
+    state_df.drop(columns[col_key]['frows'], axis=0, inplace=True)                   
             
     state_df.drop(state_df.columns[len(columns[col_key]['cols']):], axis=1, inplace=True)
     state_df.columns = columns[col_key]['cols']
     state_df.columns = state_df.columns.str.upper()    
     state_df.reset_index(inplace=True, drop=True)
     
-    # filter_df = state_df.iloc[[i for i in range(0, len(state_df)-columns[col_key]['end_rows'], columns[col_key]['step'])]]
-    # seq = state_df["GEO_CODE"].iloc[[i for i in range(0, len(state_df)-columns[col_key]['end_rows'], agi_classes.shape[0])]]    
-    # seq = seq*agi_classes.shape[0]
-    # filter_df["GEO_CODE"] = [next(seq) for count in range(filter_df.shape[0])]    
     if columns[col_key]['first_col'] > 0 : 
         state_df["AGI_STUB"] = state_df["AGI"].map(lambda x: calculate_AGI_STUB(x, agi_classes)) 
         state_df["AGI"] = np.where(state_df["AGI"].astype('str').str.strip()=="nan", state_df["GEO_CODE"], state_df["AGI"])        
@@ -331,22 +320,13 @@ def year_income_taxes(file_path, columns, col_key, year_dir, agi_classes, cols_d
         state_df.drop(state_df.index[nan_rows[i+1]+agi_classes.shape[0]+1:], inplace=True)                
     except  Exception  as e:
         print(str(e))
-        
-    
-    # filter_df["GEO_CODE"]= filter_df["GEO_CODE"].apply(lambda x: x.strip().upper())            
-    # filter_df.loc[0,"GEO_CODE"] = next(key for key, name in states.items() if name.strip().upper() in filter_df.loc[0,"GEO_CODE"].upper())                        
-    # state_df["GEO_CODE"] = state_df["GEO_CODE"].astype('str')
+            
     state_df = state_df.astype('str')
-    # state_df["GEO_CODE"] = state_df["GEO_CODE"].map(lambda x: x.replace('.0', ''))    
     state_df.replace(['\.0$', '^0.0001$'], ['', ''], regex=True,  inplace=True) 
-    # np.where(state_df["GEO_CODE"].astype('str').str.strip().str.find(".0")==-1, state_df["GEO_CODE"],state_df["GEO_CODE"].str.strip()[:-2])
-    # state_df["GEO_CODE"].str.rstrip('.0')
     state_df.drop(nan_rows, inplace=True)
     state_df.drop_duplicates(inplace=True)                                      
     state_df.replace(['\*', '\,', 'nan'], '', inplace=True, regex=True)
     state_df = state_df.applymap(lambda x: x.strip() if type(x) is str else x)
-#    state_df.replace(['.', ''], np.nan, inplace=True)
-#    state_df.replace(['--', '-'], 0, inplace=True)    
     state_df.replace(['^\.$', '\s', '^nan$'], np.nan, regex=True, inplace=True)
     state_df.replace(['^\-\-$', '^\-$'], 0, regex=True, inplace=True)
     state_df.rename(columns=cols_dict, inplace=True)
@@ -458,8 +438,7 @@ def income_taxes_2009_2015(cols_dict):
     myFiles = ['09zpallagi', '09zpallnoagi', '10zpallagi', '10zpallnoagi', '11zpallagi', 
                '11zpallnoagi', '12zpallagi', '12zpallnoagi', '13zpallagi', '13zpallnoagi', 
                '14zpallagi' , '14zpallnoagi', '15zpallagi', '15zpallnoagi']    # 'zipcode05', ,
-    # all_df = pd.DataFrame()
-    # myFiles = ['11zpallagi', '11zpallnoagi']
+    
     for file in myFiles:
         df = retrieve_df_from_csv(INC_DIR, file + ".csv", sep=',')
         df.columns = df.columns.str.upper()
@@ -479,11 +458,7 @@ def income_taxes_2009_2015(cols_dict):
         df.drop_duplicates(inplace=True)
         df.rename(columns=cols_dict, inplace=True)
         df.to_csv(os.path.join(INC_DIR, file + "-v2" + ".csv"), index=False)
-        # all_df = pd.concat([all_df, df], axis=0, ignore_index=True)
         
-    # all_df.to_csv(os.path.join(INC_DIR, "zpallagi11-15" + ".csv"), index=False)
-    
-    # return all_df
 
 def income_taxes_common_cols():
     cols_file = retrieve_df_from_csv(INC_DIR, "INCOME_TAXES_COLUMNS.csv", sep=',')
@@ -491,13 +466,14 @@ def income_taxes_common_cols():
     cols_file.drop_duplicates(subset='COL_CODE', keep='first', inplace=True)
     return cols_file
     
+
 def income_taxes_consolidated():
     cols_file = retrieve_df_from_csv(INC_DIR, "INCOME_TAXES_COLUMNS_SUMMARY.csv", sep=',')
     cols_dict = dict(zip(cols_file.COL_CODE, cols_file.NEW_CODE))
-    #df_1115 = income_taxes_2009_2015(cols_dict)
-    df_9808 = income_taxes_1998_2008(cols_dict)       
-    # all_df = pd.concat([df_1115, df_9808], axis=0, ignore_index=True)    
-    # all_df.to_csv(os.path.join(INC_DIR, "zpallagi" + ".csv"), index=False)    
+    income_taxes_2009_2015(cols_dict)
+    df_9808 = income_taxes_1998_2008(cols_dict)            
+     
+     
 def area_fips_preprocessing(ur_dir, filename):
     area_file = retrieve_df_from_csv(ur_dir, filename + ".csv", sep=',')    
     area_file.drop(area_file.columns[2:], axis=1, inplace=True)    
@@ -506,21 +482,17 @@ def area_fips_preprocessing(ur_dir, filename):
     area_file['SOURCE'] = 'HUDUSER'
     area_file.to_csv(os.path.join(ur_dir, filename + "-v2" + ".csv"), index=False)    
 
+
 def file_fromcsv_tovertica(directory, filename, sqltable):
-    # insert into  the SQL Table:
      conn = vertica_connection()             
-     cur = conn.cursor()        
-     
-     fs = open(os.path.join(directory,filename), 'rb') # INCOME_TAXES_COLUMNS_SUMMARY.csv
-     #my_file = fs.read().decode('utf-8','ignore')
-     # csvReader = csv.reader(csvfile)    
-     # it only copies 4thousands of records??
+     cur = conn.cursor()             
+     fs = open(os.path.join(directory,filename), 'rb') 
      cur.copy("COPY " + sqltable+  " from stdin DELIMITER ',' ",  fs)    
      conn.commit()
      conn.close()
 
+
 def income_taxes_fromcsv_tovertica():         
-#     # df_LML = pd.read_sql_query("select * from MacroEconomicData.SOI_IRS", conn) # the fetch operation fails and chuncksize doesn't work.    
      
      bdir = os.listdir(os.path.join(INC_DIR, "proc_incomes_taxes"))    
      for directory in  bdir:   
@@ -530,16 +502,7 @@ def income_taxes_fromcsv_tovertica():
                 conn = vertica_connection()
                 print(file_path)
                 cur = conn.cursor()               
-                csvfile = open(file_path, 'r')  
-                
-#                reader = csv.reader(csvfile)
-#                header = next(reader)
-#                headers = map((lambda x: '`'+x+'`'), header)
-#                insert = 'INSERT INTO Table (' + ", ".join(headers) + ") VALUES "
-#                for row in reader:
-#                    values = map((lambda x: '"'+x+'"'), row)
-#                    print (insert +"("+ ", ".join(values) +");" )
-                    
+                csvfile = open(file_path, 'r')                  
                 agi_file = retrieve_df_from_csv("",file_path, sep=',')
                 cols = str(agi_file.columns.tolist())
                 cols = cols.replace('\'', '')
@@ -560,36 +523,6 @@ def main(project_dir):
         - Data Sampling.
     """        
     logger.info('Retrieving DataFrame from Raw Data, Data Sampling')
-    #income_taxes_consolidated()    
-    # income_taxes_fromcsv_tovertica()
-    # file_fromcsv_tovertica(UR_DIR, 'FIPS_STATE_CODES.csv', 'MacroEconomicData.LAUS_STATE_FIPS(STATE,STATE_FIPS_CODE)')    
-    # for k,v in zip2fips.items(): 
-    #    if v=='01129': print(k)
-    
-    # make some tests:
-    # conn = vertica_connection()
-    # df_LML = pd.read_sql_query("select * from Servicing_LLMA2.LoanMaster limit 10000000", conn) # the fetch operation fails and chuncksize doesn't work.
-    # execute_query(conn, "select * from Servicing_LLMA2.LoanMaster limit 500", "LoanMaster")
-    # execute_query(conn, "select * from Servicing_LLMA2.LoanDynamic limit 500", "LoanDynamic")
-    # df_LM = retrieve_df_from_csv(RAW_DIR, "LoanMaster.csv")
-    # all_data = read_df(45)
-    
-#    df_InvCod = execute_query(conn, "select * from Servicing_LLMA2.InvestorCode_Typelookup")
-#    lt = 'U'
-#    df_InvCod_F = execute_query(conn, "select * from Servicing_LLMA2.InvestorCode_Typelookup where InvestorCode='" + lt + "'")
-#    df_LoanDyn = execute_query(conn, "select * from Servicing_LLMA2.LoanDynamic limit 500")    
-#    df_LoanMaster = execute_query(conn, "select * from Servicing_LLMA2.LoanMaster")    
-#    df_LoanDyn_Group = execute_query(conn, "select a.Period, count (a.Loan_ID) from Servicing_LLMA2.LoanDynamic as a group by a.Period")
-    startTime = datetime.now()
-    merge_allfeatures(1, 'chunks_all_c100th', 'temporalloandynamic', 'static')
-    print(datetime.now() - startTime)     
-#    area_fips_preprocessing(UR_DIR, 'zcta_cbsa_rel_10')
-#    file_fromcsv_tovertica(UR_DIR, 'zcta_cbsa_rel_10-v2.csv', 'MacroEconomicData.LAUS_AREA_ZIP(ZIP_CODE, AREA_FIPS_CODE)')    
-#    area_fips_preprocessing(UR_DIR, 'zcta_necta_rel_10')
-#    file_fromcsv_tovertica(UR_DIR, 'zcta_necta_rel_10-v2.csv', 'MacroEconomicData.LAUS_AREA_ZIP(ZIP_CODE, AREA_FIPS_CODE)')    
-#    area_fips_preprocessing(UR_DIR, 'ZIP_CBSA_092HD017')
-#    file_fromcsv_tovertica(UR_DIR, 'ZIP_CBSA_092017-v2.csv', 'MacroEconomicData.LAUS_AREA_ZIP(AREA_FIPS_CODE, ZIP_CODE, SOURCE)')    
-    
 
 
 if __name__ == '__main__':        

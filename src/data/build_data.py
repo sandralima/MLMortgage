@@ -417,8 +417,7 @@ def custom_robust_normalizer(ncols, dist_file, normalizer_type='robust_scaler_sk
     for i, x in enumerate (ncols):                        
         x_frame = dist_file.iloc[:, np.where(pd.DataFrame(dist_file.columns.values)[0].str.contains(x+'_'))[0]]    
         if not x_frame.empty:            
-            scales.append(float(pd.to_numeric(x_frame[x+'_Q3'], errors='coerce').subtract(pd.to_numeric(x_frame[x+'_Q1'], errors='coerce'))))
-                    # x_frame[x+'_Q1'].float)))            
+            scales.append(float(pd.to_numeric(x_frame[x+'_Q3'], errors='coerce').subtract(pd.to_numeric(x_frame[x+'_Q1'], errors='coerce'))))                    
             if center_value == 'median':
                 centers.append( float(x_frame[x+'_MEDIAN']) )   
             else:
@@ -595,15 +594,8 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
             
             chunk = chunk.reset_index(drop=True)               
             if (refNorm==True):            
-                # feature_cols = chunk.columns.values
-                # chunk = reformat(chunk)
-                # chunk = normalize(chunk)
-                # chunk = pd.DataFrame(chunk, columns=feature_cols, index=None)
                 chunk[robust_cols] = robust_normalizer.transform(chunk[robust_cols])
                 chunk[minmax_cols] = minmax_normalizer.transform(chunk[minmax_cols])            
-                # the output is not normalized!!
-                # chunk['LLMA2_ORIG_RATE_SPREAD'] = chunk['INITIAL_INTEREST_RATE'].subtract(chunk['MORTGAGE_RATE'], axis=0)
-                # chunk['LLMA2_CURRENT_INTEREST_SPREAD'] = chunk['CURRENT_INTEREST_RATE'].subtract(chunk['MORTGAGE_RATE'], axis=0)
 
             chunk.to_csv(target_path +'-pp.csv', mode='a', index=False) 
             labels = allfeatures_extract_labels(chunk, columns=label)
@@ -631,18 +623,14 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
             del chunk
             del labels
             i +=  1   
-                
-#        hdf.get_storer('train/features').attrs.train_size = hdf.get('train/features').shape[0]        
-#        hdf.get_storer('valid/features').attrs.valid_size = hdf.get('valid/features').shape[0]
-#        hdf.get_storer('test/features').attrs.test_size = hdf.get('test/features').shape[0]        
-        
+
+                        
 #def get_h5_dataset(raw_dir, file_name):
 #    target_path = os.path.join(PRO_DIR, raw_dir, file_name)
 #    hdf = pd.HDFStore(target_path)
 #    return data_classes.Dataset(hdf)
 
     
-
 def allfeatures_preprocessing(raw_dir, train_num, valid_num, test_num, dividing='percentage', chunksize=500000, refNorm=True):            
     for file_path in glob.glob(os.path.join(RAW_DIR, raw_dir,"*.txt")):  
         print('Preprocessing File: ' + file_path)

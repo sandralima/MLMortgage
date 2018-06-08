@@ -19,6 +19,11 @@ def get_data(num_examples, valid_num, test_num, weighted_sampling, dataset_name=
     print('Loaded all the data....')
     return data
 
+
+def get_h5_data(raw_dir, file_name):
+    return bd.get_h5_dataset(raw_dir, file_name)
+    
+
 def main(project_dir):
     """ Runs data processing scripts to turn raw data from (../raw) into
         cleaned data ready to be analyzed (saved in ../processed).
@@ -26,6 +31,7 @@ def main(project_dir):
     logger = logging.getLogger(__name__)
     logger.info('making final data set from raw data')
     # datasets = bd.read_data_sets(55000, 10000, 10000)
+    # dataset = get_h5_data('chunks_all_c100th', 'temporalloandynmodifmrstaticitur1-pp.h5'):
     
 
 

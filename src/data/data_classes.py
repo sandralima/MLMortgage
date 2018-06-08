@@ -2,20 +2,24 @@
 
 import numpy as np
 
-
 class DataBatch(object):
     """ABC."""
 
-    def __init__(self, in_tuple):
-        if in_tuple[0].shape[0] != in_tuple[1].shape[0]:
-            raise ValueError('Sizes should match!')
-        self.orig = Data(in_tuple)
-        self.features, self.labels = in_tuple
-        self._num_examples, self._num_classes = self.labels.shape        
-        self.weights = self.orig.labels @ get_weights(self.orig.labels) # 30/01/2018: this weights are not used in the tensor model!
-        # print("DataBatch weights Matrix Multiplication shape?: ", self.weights.shape)
-        # print("DataBatch weights Matrix Multiplication?: ", self.weights)
-        self._global_index = 0
+    def __init__(self, in_tuple=None, h5_dataset=None):
+        if (in_tuple!=None):
+            self.orig = Data(in_tuple)
+            self.features, self.labels = in_tuple
+            self._num_examples, self._num_classes = self.labels.shape        
+            self.weights = self.orig.labels @ get_weights(self.orig.labels) # 30/01/2018: this weights are not used in the tensor model!
+            self._global_index = 0            
+        elif (h5_dataset!=None):
+            if h5_dataset.get_storer('train/features').nrows != h5_dataset.get_storer('train/labels').nrows:
+                raise ValueError('DataBatch: Sizes should match!')  
+            self._h5_dataset = h5_dataset
+            self._num_examples, self._num_classes = h5_dataset.get_storer('train/labels').nrows, h5_dataset.get_storer('train/labels').ncols
+            self._global_index = 0            
+
+        
     # this method batches the training set in lots of size batch_size, if it reaches the end, concatenates the tail with the front and continues until the num_epoch.
     def next_batch(self, batch_size):
         """Get the next batch of the data with the given batch size."""
@@ -50,6 +54,31 @@ class DataBatch(object):
             
         return temp_features, temp_labels, np.array(
             [1.0], dtype=np.dtype('float32'))  # temp_weights
+
+
+    def next_ooc_batch(self, batch_size):
+        """Get the next batch of the data with the given batch size."""
+        if not isinstance(batch_size, int):
+            raise TypeError('DataBatch: batch_size has to be of int type.')
+        if (self._h5_dataset==None):
+            raise ValueError('DataBatch: The file_dataset was not loaded!')  
+            
+        print('self._global_index: ', self._global_index)
+                
+        if self._global_index + batch_size <= self._num_examples:
+            
+            temp_features = self.features.iloc[self._global_index:self._global_index + batch_size, :]
+            temp_labels = self.labels.iloc[self._global_index:self._global_index + batch_size]
+            self._global_index += batch_size
+            # if _global_index has become _num_examples, we need to reset it to
+            # zero. Otherwise, we don't change it. The following line does this.
+            # self._global_index = self._global_index % self._num_examples
+        else:            
+            temp_features = self.features.iloc[self._global_index:, :]
+            temp_labels = self.labels.iloc[self._global_index:, :]                        
+            self._global_index = 0
+            
+        return temp_features, temp_labels, np.array([1.0], dtype=np.dtype('float32'))  # temp_weights
 
     def shuffle(self):
         """Reshuffle the dataset and its corresponding labels."""
@@ -91,16 +120,12 @@ class DataBatch(object):
 class Data(object):
     """ABC."""
 
-    def __init__(self, in_tuple):
-        if in_tuple[0].shape[0] != in_tuple[1].shape[0]:
-            raise ValueError('Sizes should match!')
-        self.features, self.labels = in_tuple
-        self._num_examples, self._num_classes = self.labels.shape
-        # print("Data Features shape: ", self.features.shape)
-        ## print("Data Features: ", self.features)
-        ### print("Data column labels: ", self.features.axes[0].tolist()) #numpy.ndarray doesn´t have an attribute named axes
-        # print("Data - Data Labels shape: ", self.labels.shape)
-        # print("Data Labels: ", self.labels)
+    def __init__(self, in_tuple=None):
+        if in_tuple !=None:
+            if in_tuple[0].shape[0] != in_tuple[1].shape[0]:
+                raise ValueError('Sizes should match!')
+            self.features, self.labels = in_tuple
+            self._num_examples, self._num_classes = self.labels.shape
 
     @property
     def num_examples(self):
@@ -116,14 +141,16 @@ class Data(object):
 class Dataset(object):
     """A new class to represent learning datasets."""
 
-    def __init__(self, train_tuple, valid_tuple, test_tuple, feature_columns):
-        self.train = DataBatch(train_tuple)
-        self.validation = Data(valid_tuple)
-        self.test = Data(test_tuple)
-        self.feature_columns = feature_columns
-        # print('train set:', self.train) #returns an object of type: train set: <data_classes.DataBatch object at 0x0000029C911B04A8>
-        # print('validation set:', self.validation) #validation set: <data_classes.Data object at 0x0000029C91164B70>
-        # print('test set:', self.test) #test set: <data_classes.Data object at 0x0000029C911B5550>
+    def __init__(self, train_tuple=None, valid_tuple=None, test_tuple=None, feature_columns=None, h5_dataset=None):
+        if (train_tuple!=None and valid_tuple!=None and test_tuple!=None):
+            self.train = DataBatch(train_tuple)
+            self.validation = Data(valid_tuple)
+            self.test = Data(test_tuple)
+            self.feature_columns = feature_columns
+        elif (h5_dataset!=None):            
+            self.train = DataBatch(h5_dataset=h5_dataset)
+            self.validation = Data((h5_dataset.get('valid/features'), h5_dataset.get('valid/labels')))
+            self.test = Data((h5_dataset.get('test/features'), h5_dataset.get('test/labels')))            
 
 
 def get_weights(labels):

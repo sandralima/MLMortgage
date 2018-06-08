@@ -263,8 +263,7 @@ def nn_layer(input_tensor, output_dim, layer_name, act):
     nonlinearize. It further sets up name scoping so that the resultant graph
     is easy to read, and adds a number of summary ops.
     """
-    input_dim = input_tensor.shape[1].value
-    print('input_tensor.shape', input_tensor.shape, 'input_dim: ', input_dim)
+    input_dim = input_tensor.shape[1].value    
     with tf.variable_scope(layer_name): # A context manager for defining ops that creates variables (layers).
         weights = create_weights('weights', [input_dim, output_dim])
         # This is outdated and no longer applies: Do not change the order of
@@ -604,14 +603,14 @@ def calculate_metrics(labels, logits):
         # print('probs: ', probs) # probs:  Tensor("metrics/probs:0", shape=(?, 7), dtype=float32)
 
     m_list = get_m_hand(labels, probs, 'metrics/m_measure')
-    auc = get_auc(labels, probs, True, 'metrics/auc')
     accuracy = get_accuracy(labels_int, logits, 'metrics/accuracy')    
+    auc = get_auc(labels, probs, True, 'metrics/auc')    
     conf_mtx = get_confusion_matrix(labels_int, predictions,
                                     len(classes), 'metrics/confusion')
-    pr_auc = get_auc_pr_curve(labels, probs, 'metrics/pr_curve', 200)
+    # --- pr_auc = get_auc_pr_curve(labels, probs, 'metrics/pr_curve', 200)
     
     # this is for the definition of the graph:
-    return accuracy, conf_mtx, auc, m_list, labels_int, predictions, probs, pr_auc
+    return accuracy, conf_mtx, auc, m_list # ---, labels_int, predictions, probs, pr_auc
 
 
 def add_hidden_layers(features, architecture, act=tf.nn.relu):
@@ -677,7 +676,7 @@ def build_graph(architecture, learning_rate):
         logits = inference(features, architecture) #makes all processing from input (features) to output (nn_layer) but with tf.placeholders
         loss = calculate_loss(labels, logits, example_weights)
         # Accuracy is only for reporting purposes, won't be used to train.
-        accuracy, conf_mtx, auc_list, m_list, labels_int, predictions, probs, pr_auc  = calculate_metrics(
+        accuracy, conf_mtx, auc_list, m_list = calculate_metrics( # ---, labels_int, predictions, probs, pr_auc
             labels, logits)
         train(loss, learning_rate)
         with tf.name_scope('0_performance'):
@@ -690,7 +689,7 @@ def build_graph(architecture, learning_rate):
             tf.summary.scalar('2auc', tf.reduce_mean(auc_list))
             tf.summary.scalar('3m_measure', tf.reduce_mean(m_list))
             tf.summary.scalar('4loss', loss)
-            tf.summary.scalar('5pr-auc', tf.reduce_mean(pr_auc))
+            # tf.summary.scalar('5pr-auc', tf.reduce_mean(pr_auc))
         initialize()
         # print(ops.get_collection(ops.GraphKeys.LOCAL_VARIABLES))
         # FLAGS.reset_op = [
@@ -799,7 +798,7 @@ def reshape_m_mtx(mtx):
 
 def print_stats(stats, name):
     """Print the given stats."""
-    conf_mtx, acc, auc_list, m_mtx_list, labels_int, predictions, probs, pr_auc = stats
+    conf_mtx, acc, auc_list, m_mtx_list = stats  #, labels_int, predictions, probs, pr_auc = stats
     
     conf_mtx = conf_mtx / conf_mtx.sum(axis=1, keepdims=True)
     m_mtx = reshape_m_mtx(m_mtx_list)
@@ -848,15 +847,15 @@ def get_metrics(sess, mode):
             'metrics/accuracy:0', 
             'metrics/auc:0', # 'metrics/auc/0/auc:0', # this is for showing the first position of array!!
             'metrics/m_measure:0',
-            'metrics/intlabels:0',
-            'metrics/predictions:0',
-            'metrics/probs:0',
-            'metrics/pr_curve:0',            
+            #'metrics/intlabels:0',
+            #'metrics/predictions:0',
+            #'metrics/probs:0',
+            #'metrics/pr_curve:0',            
         ],    
         feed_dict=feed_dict)    
     #pmetrics = tf.Print(metrics, [metrics], message='Metrics: ')
     # print(pmetrics.eval(Session=sess))
-    print(metrics)
+    print('SparseTensorDenseAdd, accuracy, auc, m_measure: ', metrics)
     # output = sess.run('input_normalization/9_softmax_linear', feed_dict=feed_dict)
     return metrics
 
@@ -982,12 +981,12 @@ def main(_):
 
     # Hyperparameters
     #print("FLAGS.epoch_num", FLAGS.epoch_num)
-    FLAGS.epoch_num = 10  # 14  # 17  # 35  # 15
+    FLAGS.epoch_num = 20  # 14  # 17  # 35  # 15
     #print("FLAGS.epoch_num", FLAGS.epoch_num)
     FLAGS.batch_size = 256  # do NOT increase this to 1024 # 64  # 128  #
     FLAGS.dropout_keep = 0.9  # 0.9  # 0.95  # .75  # .6
     # ### parameters for training optimizer.
-    FLAGS.learning_rate = .05  # .075  # .15  # .25
+    FLAGS.learning_rate = .25  # .075  # .15  # .25
     FLAGS.momentum = .5  # used by the momentum SGD.
 
     # ### parameters for inverse_time_decay
@@ -1034,8 +1033,8 @@ def main(_):
     #FLAGS.n_hidden = len(architecture) - 2
     #print("FLAGS.n_hidden", FLAGS.n_hidden)
 
-   # if tf.gfile.Exists(FLAGS.logdir):
-   #     tf.gfile.DeleteRecursively(FLAGS.logdir)
+    if tf.gfile.Exists(FLAGS.logdir):
+       tf.gfile.DeleteRecursively(FLAGS.logdir)
     tf.gfile.MakeDirs(FLAGS.logdir)
 
     graph = build_graph(architecture, FLAGS.learning_rate)

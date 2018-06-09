@@ -1080,7 +1080,7 @@ def update_parser(parser):
         '--s_hidden',
         type=int,
         nargs='*',
-        default=[200, 140, 140],
+        default=[100, 70, 70],
         help='Size of each hidden layer.')
     parser.add_argument(
         '--stratified_flag',

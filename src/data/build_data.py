@@ -625,10 +625,12 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
             i +=  1   
 
                         
-#def get_h5_dataset(raw_dir, file_name):
-#    target_path = os.path.join(PRO_DIR, raw_dir, file_name)
-#    hdf = pd.HDFStore(target_path)
-#    return data_classes.Dataset(hdf)
+def get_h5_dataset(raw_dir, file_name):
+    target_path = os.path.join(PRO_DIR, raw_dir, file_name)
+    with  pd.HDFStore(target_path) as hdf:
+        DATA = data_classes.Dataset(h5_dataset=hdf)
+        
+    return DATA
 
     
 def allfeatures_preprocessing(raw_dir, train_num, valid_num, test_num, dividing='percentage', chunksize=500000, refNorm=True):            

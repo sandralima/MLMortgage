@@ -31,7 +31,6 @@ def main(project_dir):
     logger = logging.getLogger(__name__)
     logger.info('making final data set from raw data')
     # datasets = bd.read_data_sets(55000, 10000, 10000)
-    # dataset = get_h5_data('chunks_all_c100th', 'temporalloandynmodifmrstaticitur1-pp.h5'):
     
 
 
@@ -45,5 +44,6 @@ if __name__ == '__main__':
     # find .env automagically by walking up directories until it's found, then
     # load up the .env entries as environment variables
     load_dotenv(find_dotenv())
-
+    dataset = get_h5_data('chunks_all_c100th', 'temporalloandynmodifmrstaticitur1-pp.h5')
+    print(dataset.train.num_examples, dataset.validation.num_examples, dataset.test.num_examples)
     main(project_dir)    

@@ -1,6 +1,7 @@
 """Module for loading the real datasets."""
 
 import numpy as np
+import pandas as pd
 
 class DataBatch(object):
     """ABC."""
@@ -15,8 +16,9 @@ class DataBatch(object):
         elif (h5_dataset!=None):
             if h5_dataset.get_storer('train/features').nrows != h5_dataset.get_storer('train/labels').nrows:
                 raise ValueError('DataBatch: Sizes should match!')  
-            self._h5_dataset = h5_dataset
-            self._num_examples, self._num_classes = h5_dataset.get_storer('train/labels').nrows, h5_dataset.get_storer('train/labels').ncols
+            self.features, self.labels = None, None
+            self.h5_path = h5_dataset._path
+            self._num_examples, self._num_classes = h5_dataset.get_storer('train/labels').nrows, h5_dataset.get_storer('train/labels').ncols            
             self._global_index = 0            
 
         
@@ -60,24 +62,24 @@ class DataBatch(object):
         """Get the next batch of the data with the given batch size."""
         if not isinstance(batch_size, int):
             raise TypeError('DataBatch: batch_size has to be of int type.')
-        if (self._h5_dataset==None):
-            raise ValueError('DataBatch: The file_dataset was not loaded!')  
-            
-        print('self._global_index: ', self._global_index)
+        if (self.h5_path==None):
+            raise ValueError('DataBatch: The file_dataset was not loaded!')                      
                 
-        if self._global_index + batch_size <= self._num_examples:
-            
-            temp_features = self.features.iloc[self._global_index:self._global_index + batch_size, :]
-            temp_labels = self.labels.iloc[self._global_index:self._global_index + batch_size]
-            self._global_index += batch_size
-            # if _global_index has become _num_examples, we need to reset it to
-            # zero. Otherwise, we don't change it. The following line does this.
-            # self._global_index = self._global_index % self._num_examples
+        if self._global_index + batch_size <= self._num_examples:            
+#            temp_features = self.features.iloc[self._global_index:self._global_index + batch_size, :]            
+#            temp_labels = self.labels.iloc[self._global_index:self._global_index + batch_size]
+            temp_features = pd.read_hdf(self.h5_path, 'train/features', start=self._global_index, stop=self._global_index + batch_size)
+            temp_labels = pd.read_hdf(self.h5_path, 'train/labels', start=self._global_index, stop=self._global_index + batch_size)            
+            self._global_index += batch_size            
         else:            
-            temp_features = self.features.iloc[self._global_index:, :]
-            temp_labels = self.labels.iloc[self._global_index:, :]                        
+#            temp_features = self.features.iloc[self._global_index:, :]
+#            temp_labels = self.labels.iloc[self._global_index:, :]                        
+            temp_features = pd.read_hdf(self.h5_path, 'train/features', start=self._global_index)
+            temp_labels = pd.read_hdf(self.h5_path, 'train/labels', start=self._global_index)            
+            # hdf = pd.read_hdf('storage.h5', 'd1', where=['A>.5'], columns=['A','B'])
             self._global_index = 0
-            
+
+        print('self._global_index: ', self._global_index)            
         return temp_features, temp_labels, np.array([1.0], dtype=np.dtype('float32'))  # temp_weights
 
     def shuffle(self):
@@ -148,9 +150,9 @@ class Dataset(object):
             self.test = Data(test_tuple)
             self.feature_columns = feature_columns
         elif (h5_dataset!=None):            
-            self.train = DataBatch(h5_dataset=h5_dataset)
+            self.train = DataBatch(h5_dataset=h5_dataset)            
             self.validation = Data((h5_dataset.get('valid/features'), h5_dataset.get('valid/labels')))
-            self.test = Data((h5_dataset.get('test/features'), h5_dataset.get('test/labels')))            
+            self.test = Data((h5_dataset.get('test/features'), h5_dataset.get('test/labels'))) #if it gives some trouble, it will be loaded at the end.
 
 
 def get_weights(labels):

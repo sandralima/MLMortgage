@@ -74,12 +74,14 @@ class DataBatch(object):
         else:            
 #            temp_features = self.features.iloc[self._global_index:, :]
 #            temp_labels = self.labels.iloc[self._global_index:, :]                        
-            temp_features = pd.read_hdf(self.h5_path, 'train/features', start=self._global_index)
+            temp_features = pd.read_hdf(self.h5_path, 'train/features', start=self._global_index)            
             temp_labels = pd.read_hdf(self.h5_path, 'train/labels', start=self._global_index)            
             # hdf = pd.read_hdf('storage.h5', 'd1', where=['A>.5'], columns=['A','B'])
             self._global_index = 0
 
         print('self._global_index: ', self._global_index)            
+        temp_features = temp_features.reindex(np.random.permutation(temp_features.index))
+        temp_labels = temp_labels.reindex(np.random.permutation(temp_labels.index))            
         return temp_features, temp_labels, np.array([1.0], dtype=np.dtype('float32'))  # temp_weights
 
     def shuffle(self):

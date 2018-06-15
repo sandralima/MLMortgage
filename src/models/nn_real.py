@@ -558,35 +558,49 @@ def get_auc_pr_curve(labels, scores, name, num_thresholds):
                             num_thresholds=num_thresholds)
             ops.add_to_collections(ops.GraphKeys.UPDATE_OPS, update_op)
         
-            summary_lib.pr_curve_raw_data_op(
-                                name='curve',
-                                true_positive_counts=data.tp,
-                                false_positive_counts=data.fp,
-                                true_negative_counts=data.tn,
-                                false_negative_counts=data.fn,
-                                precision=data.precision,
-                                recall=data.recall,
-                                num_thresholds=num_thresholds,
-                                display_name='Precision-Recall Curve',
-                                description='Predictions must be in the range [0-1]')
-    
-            summary_lib.scalar(
-                                'f1_max',
-                                tf.reduce_max(
-                                    2.0 * data.precision * data.recall / tf.maximum(
-                                        data.precision + data.recall, 1e-7)))
+#            summary_lib.pr_curve_raw_data_op(
+#                                name='curve',
+#                                true_positive_counts=data.tp,
+#                                false_positive_counts=data.fp,
+#                                true_negative_counts=data.tn,
+#                                false_negative_counts=data.fn,
+#                                precision=data.precision,
+#                                recall=data.recall,
+#                                num_thresholds=num_thresholds,
+#                                display_name='Precision-Recall Curve',
+#                                description='Predictions must be in the range [0-1]')
+#    
+#            summary_lib.scalar(
+#                                'f1_max',
+#                                tf.reduce_max(
+#                                    2.0 * data.precision * data.recall / tf.maximum(
+#                                        data.precision + data.recall, 1e-7)))
             
             # AUC_PR.append(metrics.auc(tf.stack(data.recall), tf.stack(data.precision)))   # we cant use sklearn with tensorflow definition!
-            auc, update_op = tf.metrics.auc(scores[:, i], labels[:, i], num_thresholds=num_thresholds, curve='PR')
-            ops.add_to_collections(ops.GraphKeys.UPDATE_OPS, update_op)
+            auc, _ = tf.metrics.auc(tf.cast(labels[:, i], tf.bool), scores[:, i], num_thresholds=num_thresholds, curve='PR', updates_collections=ops.GraphKeys.UPDATE_OPS, summation_method='careful_interpolation')
+            # ops.add_to_collections(ops.GraphKeys.UPDATE_OPS, update_op)
             AUC_PR.append(auc)
             
-        return tf.stack( # Pack along first dim
+        return tf.stack( # Pack the array of scalar tensor along one dim tensor
             AUC_PR,
             axis=0,
             name=scope)
     
+def log_loss(labels, probs):
+    """
+    Args:
+        labels: Labels tensor, int32 - [batch_size, n_classes], with one-hot
+        encoded values.
+        logits: Probabilities tensor, float32 - [batch_size, n_classes].
+    """
+    total_loss = 0
+    for j in range(probs.shape[1]):
+        loss = metrics.log_loss(labels[:, j], probs[:, j])
+        total_loss += loss
+
+    total_loss /= float(probs.shape[1])
     
+    return total_loss
 
 def calculate_metrics(labels, logits):
     """Evaluate the quality of the logits at predicting the label.
@@ -602,21 +616,19 @@ def calculate_metrics(labels, logits):
     classes = ['0', '3', '6', '9', 'C', 'F', 'R']
     with tf.name_scope('metrics'):
         labels_int = tf.argmax(labels, 1, name='intlabels') #tf.argmax: Returns the index with the largest value across axes=1 of a tensor.		
-        predictions = tf.argmax(logits, 1, name='predictions')
-        # print ('labels_int: ', labels_int) # labels_int:  Tensor("metrics/intlabels:0", shape=(?,), dtype=int64)
-        # print('predictions: ', predictions)
-        probs = tf.nn.softmax(logits, name='probs') # Computes softmax activations. softmax = tf.exp(logits) / tf.reduce_sum(tf.exp(logits), axis)
-        # print('probs: ', probs) # probs:  Tensor("metrics/probs:0", shape=(?, 7), dtype=float32)
+        predictions = tf.argmax(logits, 1, name='predictions')        
+        probs = tf.nn.softmax(logits, name='probs') # Computes softmax activations. softmax = tf.exp(logits) / tf.reduce_sum(tf.exp(logits), axis)        
 
     m_list = get_m_hand(labels, probs, 'metrics/m_measure')
     accuracy = get_accuracy(labels_int, logits, 'metrics/accuracy')    
     auc = get_auc(labels, probs, True, 'metrics/auc')    
     conf_mtx = get_confusion_matrix(labels_int, predictions,
                                     len(classes), 'metrics/confusion')
-    # --- pr_auc = get_auc_pr_curve(labels, probs, 'metrics/pr_curve', 200)
+    loss = log_loss(labels, probs, 'metrics/log_loss')
+    pr_auc = get_auc_pr_curve(labels, probs, 'metrics/auc_pr', 200)
     
     # this is for the definition of the graph:
-    return accuracy, conf_mtx, auc, m_list # ---, labels_int, predictions, probs, pr_auc
+    return accuracy, conf_mtx, auc, m_list, loss, pr_auc # ---, labels_int, predictions, probs, pr_auc
 
 
 def add_hidden_layers(features, architecture, act=tf.nn.relu):
@@ -682,7 +694,7 @@ def build_graph(architecture, learning_rate):
         logits = inference(features, architecture) #makes all processing from input (features) to output (nn_layer) but with tf.placeholders
         loss = calculate_loss(labels, logits, example_weights)
         # Accuracy is only for reporting purposes, won't be used to train.
-        accuracy, conf_mtx, auc_list, m_list = calculate_metrics( # ---, labels_int, predictions, probs, pr_auc
+        accuracy, conf_mtx, auc_list, m_list, llos, auc_pr = calculate_metrics( # ---, labels_int, predictions, probs, pr_auc
             labels, logits)
         train(loss, learning_rate)
         with tf.name_scope('0_performance'):
@@ -695,7 +707,8 @@ def build_graph(architecture, learning_rate):
             tf.summary.scalar('2auc', tf.reduce_mean(auc_list))
             tf.summary.scalar('3m_measure', tf.reduce_mean(m_list))
             tf.summary.scalar('4loss', loss)
-            # tf.summary.scalar('5pr-auc', tf.reduce_mean(pr_auc))
+            tf.summary.scalar('5llos', tf.reduce_mean(llos))
+            tf.summary.scalar('6auc_pr', tf.reduce_mean(auc_pr))
         initialize()
         # print(ops.get_collection(ops.GraphKeys.LOCAL_VARIABLES))
         # FLAGS.reset_op = [
@@ -776,11 +789,11 @@ def batch_training(sess, writers):
         avg_cost = train_one_epoch(epoch, FLAGS.batch_size)
         print('Epoch {:03d} | Avg Cost: {:.5f}'.format(epoch, avg_cost))
         # print_stats(get_metrics(sess, 'train'), 'train')
-        metrics = get_metrics(sess, 'valid')        
-        print_stats(metrics, 'valid')
+        valid_metrics = get_metrics(sess, 'valid')        
+        print_stats(valid_metrics, 'valid')
         
         # Early Stopping:
-        if total_loss < best_loss or best_loss == -1:
+        if avg_cost < best_loss or best_loss == -1:
             best_loss = total_loss
             best_weights = model.get_weights()
             best_epoch = current_epoch
@@ -839,6 +852,10 @@ def reset_and_update(sess, feed_dict):
         for i in range(7)
     ]
     update_names_list.extend([
+        'metrics/auc_pr/{:d}/hist_accumulate/update_op'.format(i)
+        for i in range(7)
+    ])
+    update_names_list.extend([
         'metrics/m_measure/' + str(i) + str(j) + '/hist_accumulate/update_op'
         for i in range(7) for j in range(7) if i != j
     ])
@@ -861,12 +878,13 @@ def get_metrics(sess, mode):
             #'metrics/intlabels:0',
             #'metrics/predictions:0',
             #'metrics/probs:0',
-            #'metrics/pr_curve:0',            
+            'metrics/log_loss:0',
+            'metrics/auc_pr:0',            
         ],    
         feed_dict=feed_dict)    
     #pmetrics = tf.Print(metrics, [metrics], message='Metrics: ')
     # print(pmetrics.eval(Session=sess))
-    print('get_metrics: SparseTensorDenseAdd, accuracy, auc, m_measure: ', model_metrics)
+    print('get_metrics: SparseTensorDenseAdd, accuracy, auc_roc, m_measure, log_loss, auc_pr: ', model_metrics)
     # output = sess.run('input_normalization/9_softmax_linear', feed_dict=feed_dict)
     return model_metrics
 

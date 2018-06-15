@@ -28,7 +28,7 @@ from tensorflow.examples.tutorials.mnist import input_data
 from tensorflow.python.client import timeline
 from tensorflow.python.framework import ops
 from sklearn import metrics
-
+import math
 # import mort_data
 
 
@@ -304,8 +304,12 @@ def calculate_loss(labels, logits, weights):
         loss: Loss tensor of the same type as logits.
     """
     with tf.name_scope('loss') as scope:
+        # print_labels = tf.Print(labels, [labels], name='print_labels') 
+        # print_logits = tf.Print(logits, [logits], name='print_logits')  
+        # tf.print('calculate_loss:logits: ', logits)  # only at design level
         with tf.name_scope('regularization'):
-            penalty = tf.losses.get_regularization_loss(name='penalty')
+            penalty = tf.losses.get_regularization_loss(name='penalty') #Gets the total regularization loss from an optional scope name (sum for ol + 3h + 2h + 1h).
+            # print_penalty = tf.Print(penalty, [penalty], name='print_penalty') # penalty is equal to print_penalty, it is a scalar, I guess from only the output layer
             tf.summary.scalar('weight_norm', penalty / (1e-8 + FLAGS.reg_rate)) #for printing out
         with tf.name_scope('cross_entropy') as xentropy_scope:
             # ## hard (sparse) softmax: only one class can be active.
@@ -323,6 +327,7 @@ def calculate_loss(labels, logits, weights):
                 weights=1.0,  # weights,  #
                 scope=xentropy_scope,
                 loss_collection=ops.GraphKeys.LOSSES)
+            # print_weighted_cross_entropy = tf.Print(weighted_cross_entropy, [weighted_cross_entropy], name='print_weighted_cross_entropy')
             tf.summary.scalar('weighted_cross_entropy', weighted_cross_entropy)
 
             # cross_entropy = tf.losses.softmax_cross_entropy(
@@ -374,6 +379,7 @@ def train(loss, learning_rate):
     # print(update_ops)
     with ops.control_dependencies(update_ops):
         with tf.name_scope('train') as scope:
+            print_loss = tf.Print(loss, [loss], name='print_loss') 
             # Create a variable to track the global step.
             global_step = tf.get_variable(
                 'train/global_step',
@@ -741,30 +747,24 @@ def batch_training(sess, writers):
     """Iterate over the dataset based on the number of epochs and train."""
 
     def train_one_epoch(epoch, batch_size):
-        print("Complete one epoch of the training.")		
-        batch_num = DATA.train.num_examples // batch_size        
+        # print("Complete one epoch of the training.")		
+        batch_num = math.ceil(float(DATA.train.num_examples / batch_size))
         print('batch_num:', batch_num)
         avg_cost = 0
-        # keep track of the number of times batch_cost is not calculated
-        excluded = 0
         for batch_i in range(batch_num):
             step = epoch * batch_num + batch_i
-            # print ('step: ', step) # it depends on the epoch, it is continuos values steps along the epochs.
-            # print ('(step * batch_size) % (DATA.train.num_examples): ', (step * batch_size) % (DATA.train.num_examples))
             if step > 0 and (step * batch_size) % (DATA.train.num_examples) < batch_size:
                 # Train and record execution stats
                 print ('(step * batch_size) % (DATA.train.num_examples): ', (step * batch_size) % (DATA.train.num_examples))
-                train_and_summarize(sess, writers, step)
-                excluded += 1
-                # print(('Added run metadata for epoch {:03d}, '
-                #        'batch {:03d}').format(epoch, batch_i))
+                batch_cost = train_and_summarize(sess, writers, step)
             else:
-                # print('else step: ', step)
+                mydict= create_feed_dict('batch', DATA, FLAGS)
                 batch_cost, _ = sess.run( # Runs operations and evaluates tensors in fetches.
-                    ['loss:0', 'train'], feed_dict=create_feed_dict('batch', DATA, FLAGS))
-                avg_cost += batch_cost
+                    ['loss:0', 'train'], feed_dict=mydict)
+            
+            avg_cost += batch_cost
         # The division should stay outside the inner for loop.
-        if (batch_num - excluded) > 0: avg_cost = avg_cost / (batch_num - excluded)            
+        avg_cost = float(avg_cost / batch_num)
         return avg_cost 
 
     # # Create a saver for writing training checkpoints.
@@ -775,8 +775,19 @@ def batch_training(sess, writers):
     for epoch in range(FLAGS.epoch_num):
         avg_cost = train_one_epoch(epoch, FLAGS.batch_size)
         print('Epoch {:03d} | Avg Cost: {:.5f}'.format(epoch, avg_cost))
-        print_stats(get_metrics(sess, 'train'), 'train')
-        print_stats(get_metrics(sess, 'valid'), 'valid')
+        # print_stats(get_metrics(sess, 'train'), 'train')
+        metrics = get_metrics(sess, 'valid')        
+        print_stats(metrics, 'valid')
+        
+        # Early Stopping:
+        if total_loss < best_loss or best_loss == -1:
+            best_loss = total_loss
+            best_weights = model.get_weights()
+            best_epoch = current_epoch
+        else:
+            if current_epoch - best_epoch == 5:
+                break
+        
         # Do __not__ delete the following 2 lines; they periodically save the
         # model.
         checkpoint_file = FLAGS.logdir + '/model.ckpt' # os.path.join(FLAGS.logdir, 'model.ckpt')
@@ -841,7 +852,7 @@ def get_metrics(sess, mode):
     feed_dict = create_feed_dict(mode, DATA, FLAGS)
     reset_and_update(sess, feed_dict)
     
-    metrics = sess.run(
+    model_metrics = sess.run(
         [
             'metrics/confusion/SparseTensorDenseAdd:0',
             'metrics/accuracy:0', 
@@ -855,16 +866,16 @@ def get_metrics(sess, mode):
         feed_dict=feed_dict)    
     #pmetrics = tf.Print(metrics, [metrics], message='Metrics: ')
     # print(pmetrics.eval(Session=sess))
-    print('SparseTensorDenseAdd, accuracy, auc, m_measure: ', metrics)
+    print('get_metrics: SparseTensorDenseAdd, accuracy, auc, m_measure: ', model_metrics)
     # output = sess.run('input_normalization/9_softmax_linear', feed_dict=feed_dict)
-    return metrics
+    return model_metrics
 
 
 def train_and_summarize(sess, writers, step):
     """Train and record execution metadata for use in TB."""
     batch_writer = writers['batch']
-    summary, _ = sess.run(
-        ['Merge/MergeSummary:0', 'train'], feed_dict=create_feed_dict('batch', DATA, FLAGS))
+    summary, batch_loss, _ = sess.run(
+        ['Merge/MergeSummary:0', 'loss:0', 'train'], feed_dict=create_feed_dict('batch', DATA, FLAGS))
     # Do __not__ delete the following lines. I've disabled these just to make
     # the program faster; however, these would write metadata to TB.
 
@@ -883,9 +894,10 @@ def train_and_summarize(sess, writers, step):
     batch_writer.add_summary(summary, step)
     batch_writer.flush()
 
-    write_summaries(sess, writers, 'train', step)
+    # write_summaries(sess, writers, 'train', step)
     write_summaries(sess, writers, 'valid', step)
-    return
+    print('train_and_summarize: ', summary)
+    return batch_loss
 
 
 def write_summaries(sess, writers, mode, step):
@@ -902,21 +914,19 @@ def write_summaries(sess, writers, mode, step):
 def create_feed_dict(tag, DATA, FLAGS):
     """Create the feed dictionary for mapping data onto placeholders in the graph."""
     if tag == 'batch':
-        features, targets, example_weights = DATA.train.next_batch( # example_weights = [1.0] it is not used in the inference.
-            FLAGS.batch_size)
-        # features = np.random.randn(*features.shape)
+        features, targets, example_weights = DATA.train.next_ooc_batch(FLAGS.batch_size)        
     elif tag == 'train':
         features = DATA.train.orig.features
         targets = DATA.train.orig.labels
-        example_weights = np.ones_like(targets[:, 1])
+        example_weights = np.ones_like(targets.iloc[:, 1].values)
     elif tag == 'valid':
         features = DATA.validation.features
         targets = DATA.validation.labels
-        example_weights = np.ones_like(targets[:, 1])
+        example_weights = np.ones_like(targets.iloc[:, 1].values)
     else:
         features = DATA.test.features
         targets = DATA.test.labels
-        example_weights = np.ones_like(targets[:, 1])
+        example_weights = np.ones_like(targets.iloc[:, 1].values)
 
     # features[:, :7] = targets
     if tag == 'batch':
@@ -1009,13 +1019,13 @@ def main(_):
 
     # Architecture	
     architecture = {
-        'n_input': DATA.train.features.shape[1],
+        'n_input': DATA.validation.features.shape[1],
         #'n_hidden_1': 100,  # 200,  # 2 * 256,  # 512, # 128,
         #'n_hidden_2': 140,  # 256,
         # 'n_hidden_3': 140,  # 128,
         # 'n_hidden_4': 140,
         # 'n_hidden_5': 140,
-        'n_classes': DATA.train.num_classes
+        'n_classes': DATA.validation.num_classes
     }
     print('len(FLAGS.s_hidden)', len(FLAGS.s_hidden))
     if FLAGS.n_hidden < 0 : raise ValueError('The size of hidden layer must be at least 0')
@@ -1099,7 +1109,8 @@ FLAGS.weighted_sampling = False  # True  #
 if __name__ == '__main__':    
     # random seed for the mnist iterator
     np.random.seed(RANDOM_SEED)  # pylint: disable=no-member
-    DATA = md.get_data(220000, 20000, 20000, FLAGS.weighted_sampling, dataset_name='MORT', stratified_flag = FLAGS.stratified_flag, refNorm=True)  # 'MNIST')
+    # DATA = md.get_data(220000, 20000, 20000, FLAGS.weighted_sampling, dataset_name='MORT', stratified_flag = FLAGS.stratified_flag, refNorm=True)  # 'MNIST')
+    DATA = md.get_h5_data()
     # print(DATA.validation.labels.sum(axis=0))
     # main(1)
     # print("before tf.app.run(...)")    

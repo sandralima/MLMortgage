@@ -658,7 +658,7 @@ def read_data_sets(num_examples, valid_num, test_num, weight_flag=False, stratif
     all_data = grd.read_df(45) 
     print('Size of the database:', all_data.shape)
     train, valid, test, feature_columns = get_datasets(all_data, num_examples, valid_num, test_num,
-                            weight_flag, stratified_flag, refNorm=refNorm)    
+                            weight_flag=weight_flag, stratified_flag=stratified_flag, refNorm=refNorm)    
     return data_classes.Dataset(train, valid, test, feature_columns)
 
 

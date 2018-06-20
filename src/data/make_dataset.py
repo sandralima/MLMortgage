@@ -21,7 +21,7 @@ def get_data(num_examples, valid_num, test_num, weight_flag=False, dataset_name=
 
 
 def get_h5_data():
-    return bd.get_h5_dataset('chunks_all_c100th', 'temporalloandynmodifmrstaticitur1-pp.h5')
+    return bd.get_h5_dataset('chunks_all_c100th', 'temporalloandynmodifmrstaticitur1-100th-pp.h5')  #'temporalloandynmodifmrstaticitur1-pp.h5')
     
 
 def main(project_dir):

@@ -29,7 +29,7 @@ class DataBatch(object):
             raise TypeError('batch_size has to be of int type.')
         # if self._global_index == 0:
         #     self.sample()
-        print('self._global_index: ', self._global_index)
+        # print('self._global_index: ', self._global_index)
         # print('self._global_index end: ', self._global_index + batch_size)
                 
         if self._global_index + batch_size <= self._num_examples:
@@ -79,7 +79,7 @@ class DataBatch(object):
             # hdf = pd.read_hdf('storage.h5', 'd1', where=['A>.5'], columns=['A','B'])
             self._global_index = 0
 
-        print('self._global_index: ', self._global_index)            
+        # print('self._global_index: ', self._global_index)            
         temp_features = temp_features.reindex(np.random.permutation(temp_features.index))
         temp_labels = temp_labels.reindex(np.random.permutation(temp_labels.index))            
         return temp_features, temp_labels, np.array([1.0], dtype=np.dtype('float32'))  # temp_weights

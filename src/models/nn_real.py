@@ -29,6 +29,7 @@ from tensorflow.python.client import timeline
 from tensorflow.python.framework import ops
 from sklearn import metrics
 import math
+import pandas as pd
 # import mort_data
 
 
@@ -121,7 +122,7 @@ def _create_variable(name,
     return var
 
 
-def create_weights(name, shape):
+def create_weights(name, shape, reg_rate):
     """Create a Variable initialized with weights which are truncated normal distribution and regularized by
     l1_regularizer (L1 regularization encourages sparsity, Regularization can help prevent overfitting).    
 
@@ -140,7 +141,7 @@ def create_weights(name, shape):
         stddev=(1.0 / np.sqrt(shape[0])), dtype=dtype)
 
     regularizer = tf.contrib.layers.l1_regularizer(
-        float(FLAGS.reg_rate), 'penalty')
+        float(reg_rate), 'penalty')
     return _create_variable(name, shape, kernel_initializer, regularizer,
                             dtype)
 
@@ -196,7 +197,7 @@ def dropout_layer(name, tensor_before):
     return dropped
 
 
-def batch_normalization(name, input_tensor):
+def batch_normalization(name, input_tensor, train_flag):
     """Perform batch normalization over the input tensor.
     Batch normalization helps avoid overfitting and we're able to use more
     aggressive (larger) learning rates, resulting in faster convergence.
@@ -213,7 +214,7 @@ def batch_normalization(name, input_tensor):
     """
     # if not FLAGS.batch_norm:
     #     return input_tensor
-    train_flag = tf.get_default_graph().get_tensor_by_name('train_flag:0')
+    # train_flag = tf.get_default_graph().get_tensor_by_name('train_flag:0')
     with tf.name_scope(name):
         normalized = tf.layers.batch_normalization(
             input_tensor,
@@ -245,18 +246,18 @@ def layer_normalization(name, input_tensor):
     return normalized
 
 
-def normalize(name, input_tensor, norm_type):
+def normalize(name, input_tensor, batch_type, train_flag):
     """Perform either type (batch/layer) of normalization."""
     if not FLAGS.batch_norm:
         return input_tensor
-    if norm_type.lower() == 'batch':
-        return batch_normalization(name, input_tensor)
-    if norm_type.lower() == 'layer':
+    if batch_type.lower() == 'batch':
+        return batch_normalization(name, input_tensor, train_flag)
+    if batch_type.lower() == 'layer':
         return layer_normalization(name, input_tensor)
-    raise ValueError('Invalid value for norm_type: ' + norm_type)
+    raise ValueError('Invalid value for batch_type: ' + batch_type)
 
 
-def nn_layer(input_tensor, output_dim, layer_name, act):
+def nn_layer(input_tensor, output_dim, layer_name, batch_type, act, reg_rate, train_flag):
     """Create a simple neural net layer.
 
     It performs the affine transformation and uses the activation function to
@@ -265,7 +266,7 @@ def nn_layer(input_tensor, output_dim, layer_name, act):
     """
     input_dim = input_tensor.shape[1].value    
     with tf.variable_scope(layer_name): # A context manager for defining ops that creates variables (layers).
-        weights = create_weights('weights', [input_dim, output_dim])
+        weights = create_weights('weights', [input_dim, output_dim], reg_rate)
         # This is outdated and no longer applies: Do not change the order of
         # batch normalization and drop out. batch # normalization has to stay
         # __before__ the drop out layer.
@@ -282,7 +283,7 @@ def nn_layer(input_tensor, output_dim, layer_name, act):
         # normalizing x = W u + b```
         # biases = bias_variable('biases', [output_dim], layer_name)
         preactivate = normalize('layer_normalization', mixed,
-                                'layer')  # + biases
+                                batch_type, train_flag)  # + biases
         # tf.summary.histogram('pre_activations', preactivate)
         # preactivate = dropout_layer('dropout', preactivate)
         with tf.name_scope('activation') as scope:
@@ -379,7 +380,7 @@ def train(loss, learning_rate):
     # print(update_ops)
     with ops.control_dependencies(update_ops):
         with tf.name_scope('train') as scope:
-            print_loss = tf.Print(loss, [loss], name='print_loss') 
+            # print_loss = tf.Print(loss, [loss], name='print_loss') 
             # Create a variable to track the global step.
             global_step = tf.get_variable(
                 'train/global_step',
@@ -472,8 +473,7 @@ def get_auc(labels, scores, hist_flag, name):
         #    aucp = auc_func(labels, scores, class_, str(ind))
             # tf.Print(aucp)
         aucv = [
-                auc_func(labels, scores, class_, str(ind))
-                for ind, class_ in enumerate(classes) # pair (index ej. 0, value ej. '0')
+                auc_func(labels, scores, class_, str(ind)) for ind, class_ in enumerate(classes) # pair (index ej. 0, value ej. '0')
                ]      
         auc_values = tf.stack( # Pack along first dim
             aucv,
@@ -541,6 +541,9 @@ def get_m_hand(labels, scores, name):
                     with tf.name_scope(final_name) as scope:
                         auc = get_auc_using_histogram(
                             labels, scores, first_ind, second_ind, scope)
+#                        if (auc==np.nan): 
+#                            auc=0
+#                            print('auc with nan value')
                     temp_array.append(auc)
         return tf.stack(temp_array, axis=0, name=main_scope) # Stacks a list of rank-R tensors into one rank-(R+1) tensor.
 
@@ -550,12 +553,13 @@ def get_m_hand(labels, scores, name):
 def get_auc_pr_curve(labels, scores, name, num_thresholds):    
     with tf.name_scope(name) as scope:                             
         AUC_PR = []
+        AUC_data = []
         for i in range(7):  
             data, update_op = tf.contrib.metrics.precision_recall_at_equal_thresholds(
                             name='pr_data',
                             predictions=scores[:, i],
                             labels=tf.cast(labels[:, i], tf.bool),
-                            num_thresholds=num_thresholds)
+                            num_thresholds=10, use_locking=True)
             ops.add_to_collections(ops.GraphKeys.UPDATE_OPS, update_op)
         
 #            summary_lib.pr_curve_raw_data_op(
@@ -576,23 +580,26 @@ def get_auc_pr_curve(labels, scores, name, num_thresholds):
 #                                    2.0 * data.precision * data.recall / tf.maximum(
 #                                        data.precision + data.recall, 1e-7)))
             
-            # AUC_PR.append(metrics.auc(tf.stack(data.recall), tf.stack(data.precision)))   # we cant use sklearn with tensorflow definition!
-            auc, _ = tf.metrics.auc(tf.cast(labels[:, i], tf.bool), scores[:, i], num_thresholds=num_thresholds, curve='PR', updates_collections=ops.GraphKeys.UPDATE_OPS, summation_method='careful_interpolation')
+            AUC_data.append((tf.stack(data.recall), tf.stack(data.precision), tf.stack(data.thresholds)))   # we cant use sklearn with tensorflow definition!
+            auc, _ = tf.metrics.auc(labels[:, i], scores[:, i], weights=None, num_thresholds=10, 
+                                    curve='PR', updates_collections=ops.GraphKeys.UPDATE_OPS, metrics_collections=None) # summation_method='careful_interpolation'
             # ops.add_to_collections(ops.GraphKeys.UPDATE_OPS, update_op)
             AUC_PR.append(auc)
-            
+        # print(AUC_data)
         return tf.stack( # Pack the array of scalar tensor along one dim tensor
             AUC_PR,
             axis=0,
-            name=scope)
+            name=scope), AUC_data
+
     
+# at running level:  
 def log_loss(labels, probs):
     """
     Args:
         labels: Labels tensor, int32 - [batch_size, n_classes], with one-hot
         encoded values.
         logits: Probabilities tensor, float32 - [batch_size, n_classes].
-    """
+    """    
     total_loss = 0
     for j in range(probs.shape[1]):
         loss = metrics.log_loss(labels[:, j], probs[:, j])
@@ -601,6 +608,23 @@ def log_loss(labels, probs):
     total_loss /= float(probs.shape[1])
     
     return total_loss
+
+# at graph level:
+def log_loss(labels, probs, name):
+    """
+    Args:
+        labels: Labels tensor, int32 - [batch_size, n_classes], with one-hot
+        encoded values.
+        logits: Probabilities tensor, float32 - [batch_size, n_classes].
+    """
+    with tf.name_scope(name) as scope:
+        total_loss = 0
+        for j in range(probs.shape[1].value):
+            loss = tf.losses.log_loss(labels[:, j], probs[:, j], loss_collection=None)
+            total_loss += loss
+    
+        return tf.div(total_loss, float(probs.shape[1].value), name=scope)
+                      
 
 def calculate_metrics(labels, logits):
     """Evaluate the quality of the logits at predicting the label.
@@ -625,31 +649,31 @@ def calculate_metrics(labels, logits):
     conf_mtx = get_confusion_matrix(labels_int, predictions,
                                     len(classes), 'metrics/confusion')
     loss = log_loss(labels, probs, 'metrics/log_loss')
-    pr_auc = get_auc_pr_curve(labels, probs, 'metrics/auc_pr', 200)
+    pr_auc, pr_data = get_auc_pr_curve(labels, probs, 'metrics/auc_pr', 200)
     
     # this is for the definition of the graph:
-    return accuracy, conf_mtx, auc, m_list, loss, pr_auc # ---, labels_int, predictions, probs, pr_auc
+    return accuracy, conf_mtx, auc, m_list, loss, pr_auc, pr_data 
 
 
-def add_hidden_layers(features, architecture, act=tf.nn.relu):
+def add_hidden_layers(features, architecture, n_hidden, batch_type, reg_rate, train_flag, act=tf.nn.relu):
     """Add hidden layers to the model using the architecture parameters."""
     hidden_out = features
     jit_scope = tf.contrib.compiler.jit.experimental_jit_scope #JIT compiler compiles and runs parts of TF graphs via XLA, fusing multiple operators (kernel fusion) nto a small number of compiled kernels.
     with jit_scope(): #this operation will be compiled with XLA.
-        for hid_i in range(1, FLAGS.n_hidden + 1):
+        for hid_i in range(1, n_hidden + 1):
             hidden_out = nn_layer(hidden_out,
                                   architecture['n_hidden_{:1d}'.format(hid_i)],
-                                  '{:1d}_hidden'.format(hid_i), act)
+                                  '{:1d}_hidden'.format(hid_i), batch_type, act, reg_rate, train_flag)
     return hidden_out
 
 
-def inference(features, architecture):
+def inference(features, architecture, FLAGS):
     """Build the forward model and return the logits and labels placeholder."""
     train_flag = tf.placeholder(tf.bool, None, name='train_flag')
     with tf.name_scope('input_normalization') as scope:
-        # feature_norm = features
-        feature_norm = tf.contrib.layers.layer_norm( # 
-            features, center=True, scale=True, scope=scope)
+        feature_norm = features
+#        feature_norm = tf.contrib.layers.layer_norm( # 
+#            features, center=True, scale=True, scope=scope)
         # feature_norm = tf.layers.batch_normalization(
         #     features,
         #     center=True,  # False,
@@ -658,10 +682,11 @@ def inference(features, architecture):
         #     name='input_normalization/norm')
         variable_summaries('input_normalized', feature_norm)
 
-    hidden_out = add_hidden_layers(feature_norm, architecture)
+    hidden_out = add_hidden_layers(feature_norm, architecture, FLAGS.n_hidden, FLAGS.batch_layer_type,
+                                   FLAGS.reg_rate, train_flag)
     # Linear output layer for the logits
     logits = (nn_layer(hidden_out, architecture['n_classes'],
-                       '9_softmax_linear', tf.identity))
+                       '9_softmax_linear', FLAGS.batch_layer_type, tf.identity, FLAGS.reg_rate, train_flag))    
     return logits
 
 
@@ -680,7 +705,7 @@ def initialize():
 ##########################
 # ## GRAPH DEFINITION ## #
 ##########################
-def build_graph(architecture, learning_rate):
+def build_graph(architecture, FLAGS):
     """Build the computation graph for the neural net."""
     print('Building the computation graph in TF....')
     tf.set_random_seed(RANDOM_SEED)
@@ -691,12 +716,12 @@ def build_graph(architecture, learning_rate):
             DT_FLOAT, [None, architecture['n_classes']], name='targets')
         example_weights = tf.placeholder(
             DT_FLOAT, [None], name='example_weights')
-        logits = inference(features, architecture) #makes all processing from input (features) to output (nn_layer) but with tf.placeholders
+        logits = inference(features, architecture, FLAGS) #makes all processing from input (features) to output (nn_layer) but with tf.placeholders
         loss = calculate_loss(labels, logits, example_weights)
         # Accuracy is only for reporting purposes, won't be used to train.
-        accuracy, conf_mtx, auc_list, m_list, llos, auc_pr = calculate_metrics( # ---, labels_int, predictions, probs, pr_auc
+        accuracy, conf_mtx, auc_list, m_list, lloss, auc_pr, auc_data = calculate_metrics( # ---, labels_int, predictions, probs, pr_auc
             labels, logits)
-        train(loss, learning_rate)
+        train(loss, FLAGS.learning_rate)
         with tf.name_scope('0_performance'):
             # Scalar summaries to track the loss and accuracy over time in TB.
             tf.summary.scalar('0accuracy', accuracy)
@@ -704,10 +729,10 @@ def build_graph(architecture, learning_rate):
                               tf.reduce_mean(
                                   tf.diag_part(conf_mtx / tf.reduce_sum(
                                       conf_mtx, axis=1, keepdims=True))))
-            tf.summary.scalar('2auc', tf.reduce_mean(auc_list))
+            tf.summary.scalar('2auc_aoc', tf.reduce_mean(auc_list))
             tf.summary.scalar('3m_measure', tf.reduce_mean(m_list))
             tf.summary.scalar('4loss', loss)
-            tf.summary.scalar('5llos', tf.reduce_mean(llos))
+            tf.summary.scalar('5log_loss', lloss)
             tf.summary.scalar('6auc_pr', tf.reduce_mean(auc_pr))
         initialize()
         # print(ops.get_collection(ops.GraphKeys.LOCAL_VARIABLES))
@@ -731,7 +756,7 @@ def build_graph(architecture, learning_rate):
 ###############################
 # ## TRAINING & EVALUATION ## #
 ###############################
-def run_model(comp_graph):
+def run_model(comp_graph, name, net_number, FLAGS, DATA):
     """Run the model represented by the input computation graph."""
     config = tf.ConfigProto() # is a configuring class for the graph.
     # Turns on XLA JIT compilation if the XLA flag is on.
@@ -747,65 +772,103 @@ def run_model(comp_graph):
                 FLAGS.logdir + '/valid', graph=None)
         }
         try:
-            batch_training(sess, writers)
+            
+            batch_training(sess, writers, name, net_number, FLAGS, DATA)
         finally:
             for mode in writers:
                 writers[mode].close()
             if FLAGS.test_flag:
-                print_stats(get_metrics(sess, 'test'), 'test')
+                feed_test = create_feed_dict('test', DATA, FLAGS)
+                test_metrics = get_metrics(sess, feed_test)
+                bett_acc_test, m_mtx_mean_test, auc_aoc_mean_test, auc_pr_mean_test = print_stats(test_metrics, 'test')                
+                dtype = ['NN_name', 'NN_Number','Loss','LogLoss','Accuracy','Better-Accuracy','M-Measure Mean','AUC_AOC Mean','AUC_PR Mean']
+                pd.DataFrame(data=[(name, net_number, test_metrics[4], test_metrics[5], test_metrics[1], bett_acc_test, m_mtx_mean_test, auc_aoc_mean_test, auc_pr_mean_test)], 
+                             columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name + '_' + str(net_number) +"test_history.csv"), index=False, mode='a')
+                
     return
 
 
-def batch_training(sess, writers):
+def batch_training(sess, writers, name, net_number, FLAGS, DATA):
     """Iterate over the dataset based on the number of epochs and train."""
 
     def train_one_epoch(epoch, batch_size):
-        # print("Complete one epoch of the training.")		
+        print("Epoch: ", epoch)		
         batch_num = math.ceil(float(DATA.train.num_examples / batch_size))
-        print('batch_num:', batch_num)
-        avg_cost = 0
+        # print('batch_num:', batch_num)  
+        
+        acc_conf_mtx=np.zeros((DATA.train.num_classes, DATA.train.num_classes))
+        acc_acc = 0
+        acc_auc_list = np.zeros((DATA.train.num_classes))
+        acc_m_mtx = np.zeros((DATA.train.num_classes, DATA.train.num_classes))
+        acc_loss = 0
+        acc_log_loss = 0
+        acc_auc_pr_list = np.zeros((DATA.train.num_classes))
+        
+        epoch_metrics = (acc_conf_mtx, acc_acc, acc_auc_list, acc_m_mtx, acc_loss, acc_log_loss, acc_auc_pr_list)
         for batch_i in range(batch_num):
-            step = epoch * batch_num + batch_i
-            if step > 0 and (step * batch_size) % (DATA.train.num_examples) < batch_size:
-                # Train and record execution stats
+            batch_dict= create_feed_dict('batch', DATA, FLAGS)
+            step = epoch * batch_num + batch_i            
+            if step > 0 and (step * batch_size) % (DATA.train.num_examples) < batch_size:                
                 print ('(step * batch_size) % (DATA.train.num_examples): ', (step * batch_size) % (DATA.train.num_examples))
-                batch_cost = train_and_summarize(sess, writers, step)
-            else:
-                mydict= create_feed_dict('batch', DATA, FLAGS)
-                batch_cost, _ = sess.run( # Runs operations and evaluates tensors in fetches.
-                    ['loss:0', 'train'], feed_dict=mydict)
-            
-            avg_cost += batch_cost
+                train_and_summarize(sess, writers, step, batch_dict)                
+            else:                
+                _ = sess.run(['train'], feed_dict=batch_dict)                
+                
+            batch_metrics = get_metrics(sess, batch_dict)        
+            epoch_metrics = batch_stats(epoch_metrics, batch_metrics) 
+            feed_valid = create_feed_dict('valid', DATA, FLAGS)            
+            write_summaries(sess, writers, 'valid', step, feed_valid)            
         # The division should stay outside the inner for loop.
-        avg_cost = float(avg_cost / batch_num)
-        return avg_cost 
+        epoch_metrics = (epoch_metrics[0], epoch_metrics[1]/batch_num, epoch_metrics[2]/batch_num, epoch_metrics[3]/batch_num, 
+                         epoch_metrics[4], epoch_metrics[5], epoch_metrics[6]/batch_num)
+        
+        return epoch_metrics 
 
     # # Create a saver for writing training checkpoints.
-    saver = tf.train.Saver(var_list=None, max_to_keep=5)
+    saver = tf.train.Saver(var_list=None, max_to_keep=1)
     # # Initialize all the variables in the graph.
     sess.run('init')
     print('Initialized all the local and global variables in the graph....')
+    
+    best_loss = -1
+    best_epoch = 0 
+    # best_weights = None
+    train_history =[]
+    valid_history=[]    
+#    dtype = [('epoch','int32'), ('Loss','float64'), ('LogLoss','float64'), ('Accuracy','float64'), 
+#             ('Better-Accuracy','float64'), ('M-Measure Mean','float64'), ('AUC_AOC Mean','float64'), ('AUC_PR Mean','float64')]    
+    checkpoint_file = FLAGS.logdir + '/' + name + '_' + str(net_number) #'/model.ckpt' # os.path.join(FLAGS.logdir, 'model.ckpt')
     for epoch in range(FLAGS.epoch_num):
-        avg_cost = train_one_epoch(epoch, FLAGS.batch_size)
-        print('Epoch {:03d} | Avg Cost: {:.5f}'.format(epoch, avg_cost))
-        # print_stats(get_metrics(sess, 'train'), 'train')
-        valid_metrics = get_metrics(sess, 'valid')        
-        print_stats(valid_metrics, 'valid')
+        epoch_metrics = train_one_epoch(epoch, FLAGS.batch_size)
+        bett_acc_train, m_mtx_mean_train, auc_aoc_mean_train, auc_pr_mean_train = print_stats(epoch_metrics, 'train')        
+        # Validation set:
+        feed_valid = create_feed_dict('valid', DATA, FLAGS)
+        valid_metrics = get_metrics(sess, feed_valid)                    
+        bett_acc_valid, m_mtx_mean_valid, auc_aoc_mean_valid, auc_pr_mean_valid = print_stats(valid_metrics, 'valid')
+        # model.set_weights(best_weights) ?? How to do that with tensorflow??
+        # Do __not__ delete the following 2 lines; they periodically save the model.                
+        saver.save(sess, checkpoint_file) # global_step=epoch
+        train_history += [(epoch, epoch_metrics[4], epoch_metrics[5], epoch_metrics[1], bett_acc_train, m_mtx_mean_train, auc_aoc_mean_train, auc_pr_mean_train)]
+        valid_history += [(epoch, valid_metrics[4], valid_metrics[5], valid_metrics[1], bett_acc_valid, m_mtx_mean_valid, auc_aoc_mean_valid, auc_pr_mean_valid)]
         
         # Early Stopping:
-        if avg_cost < best_loss or best_loss == -1:
-            best_loss = total_loss
-            best_weights = model.get_weights()
-            best_epoch = current_epoch
+        if valid_metrics[5] < best_loss or best_loss == -1:
+            best_loss = valid_metrics[5]
+            # only_weights = [layer for layer in tf.trainable_variables() if layer.op.name.find('weights')>0 ]            
+            # if weights: best_weights =  weights[0].eval()  
+            # model.set_weights(best_weights) ?? How to do that with tensorflow??
+            # Do __not__ delete the following 2 lines; they periodically save the model.                
+            # saver.save(sess, checkpoint_file) # global_step=epoch
+            best_epoch = epoch
         else:
-            if current_epoch - best_epoch == 5:
-                break
-        
-        # Do __not__ delete the following 2 lines; they periodically save the
-        # model.
-        checkpoint_file = FLAGS.logdir + '/model.ckpt' # os.path.join(FLAGS.logdir, 'model.ckpt')
-        saver.save(sess, checkpoint_file, global_step=epoch)
-    return
+            if epoch - best_epoch == 10:
+                print('Stopping: Not Improve in Validation Set after 10 epochs')
+                break        
+    
+    dtype = ['epoch','Loss','LogLoss','Accuracy','Better-Accuracy','M-Measure Mean','AUC_AOC Mean','AUC_PR Mean']
+    pd.DataFrame(data=train_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name + '_' + str(net_number) +"_train_history.csv"), index=False)
+    pd.DataFrame(data=valid_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name + '_' + str(net_number) +"valid_history.csv"), index=False)
+    return 
 
 
 def reshape_m_mtx(mtx):
@@ -815,46 +878,108 @@ def reshape_m_mtx(mtx):
         new_mtx.extend(mtx[i * 7:(i + 1) * 7])
         new_mtx.append(0)
     temp = np.array(new_mtx).reshape(7, 7)
-    temp = .5 * (temp + temp.T)
+#    temp = .5 * (temp + temp.T)
     # # temp = np.triu(temp)
     return temp
 
 
 def print_stats(stats, name):
     """Print the given stats."""
-    conf_mtx, acc, auc_list, m_mtx_list = stats  #, labels_int, predictions, probs, pr_auc = stats
+        
+    conf_mtx, acc, auc_list, m_mtx_list, loss, log_loss, auc_pr_list = stats          
+               
+    conf_mtx1 = conf_mtx / conf_mtx.sum(axis=1, keepdims=True)       
+    bett_acc = conf_mtx1.diagonal().mean()
+    auc_aoc_mean = auc_list.mean()
+    auc_pr_mean = auc_pr_list.mean()
+    # global_acc = 0.
+    m_mtx_mean = 0.
     
-    conf_mtx = conf_mtx / conf_mtx.sum(axis=1, keepdims=True)
-    m_mtx = reshape_m_mtx(m_mtx_list)
-    print(
-        '{:s}:'.format(name),
-        '(Silly) ACC={:.4f}, Better ACC={:.4f},'.format(
-            acc, conf_mtx.diagonal().mean()),
-        'M-Measure={:.4f},'.format(m_mtx.sum() / (49 - 7)),
-        'AUC={:.4f}'.format(auc_list.mean()), )
-    print(('\t' * 6).join(['Confusion Matrix', 'M-Measure Matrix', 'AUC']))
-    for conf_row, row, auc in zip(conf_mtx, m_mtx, auc_list):
-        for conf_value in conf_row:
-            print('{:.4f}'.format(conf_value), '\t', end='')
-        print('|\t', end='')
-        for value in row:
-            print('{:.4f}'.format(value), '\t', end='')
-        print('| \t{:.4f}'.format(auc), '\n')
-    print('--------------------------------------------------------------'
-          '------------')
+    if (name!='train'):
+        m_mtx = reshape_m_mtx(m_mtx_list)
+        m_mtx_mean = float(m_mtx.sum()) / (49 - 7)
+        print('Avg Cost in ' + name +': {:.5f}'.format(loss))        
+        print('Avg Log_Cost in ' + name +': {:.5f}'.format(log_loss))
+        print(
+            '{:s}:'.format(name),
+            '(Silly) Global-ACC={:.4f}, Better ACC={:.4f},'.format(
+                acc, bett_acc),
+            'Avg M-Measure={:.4f},'.format(m_mtx_mean),
+            'Avg AUC_AOC={:.4f}'.format(auc_aoc_mean), 'Avg AUC_PR={:.4f}'.format(auc_pr_mean))
+        print(('\t' * 6).join(['Total Confusion Matrix', 'Total M-Measure Matrix', 'Total AUC_AOC', 'Total AUC_PR']))
+        for conf_row, row, auc, auc_pr in zip(conf_mtx, m_mtx, auc_list, auc_pr_list):
+            for conf_value in conf_row:
+                print('{:.4f}'.format(conf_value), '\t', end='')
+            print('|\t', end='')
+            for value in row:
+                print('{:.4f}'.format(value), '\t', end='')
+            print('| \t{:.4f}'.format(auc), '| \t{:.4f}'.format(auc_pr), '\n')        
+        print('--------------------------------------------------------------'
+              '------------')
+    else:    
+        print('Total Cost in ' + name +': {:.5f}'.format(loss))        
+        print('Total Log_Cost in ' + name +': {:.5f}'.format(log_loss))        
+#        sum_mtx = np.sum(conf_mtx, axis=1)
+#        for y in range(7):
+#            global_acc += conf_mtx[y,y] / (sum_mtx[y])
+#            
+#        global_acc /= conf_mtx.shape[0]
+        m_mtx = m_mtx_list
+        m_mtx_mean = float(m_mtx.sum()) / (49 - 7)
+        print(
+            '{:s}:'.format(name),
+            '(Silly) Batch-Avg_ACC={:.4f}, Better ACC={:.4f},'.format(acc, bett_acc),
+            'Batch-Avg_M_Measure={:.4f},'.format(m_mtx_mean),
+            'Batch-Avg_AUC_AOC={:.4f}'.format(auc_aoc_mean), 'Batch-Avg_AUC_PR={:.4f}'.format(auc_pr_mean))
+        print(('\t' * 6).join(['Total Confusion Matrix', 'Batch-M_Measure Matrix', 'Batch-AUC_AOC', 'Batch-AUC_PR']))
+        for conf_row, row, auc, auc_pr in zip(conf_mtx, m_mtx, auc_list, auc_pr_list):
+            for conf_value in conf_row:
+                print('{:.4f}'.format(conf_value), '\t', end='')
+            print('|\t', end='')
+            for value in row:
+                print('{:.4f}'.format(value), '\t', end='')
+            print('| \t{:.4f}'.format(auc), '| \t{:.4f}'.format(auc_pr), '\n')        
+        print('--------------------------------------------------------------'
+              '------------')        
+    
+    return bett_acc, m_mtx_mean, auc_aoc_mean, auc_pr_mean
+    
 
+def batch_stats(global_stats, current_stats):
+    """Print the given stats."""
+    acc_conf_mtx, acc_acc, acc_auc_list, acc_m_mtx, acc_loss, acc_log_loss, acc_auc_pr_list = global_stats
+    conf_mtx, acc, auc_list, m_mtx_list, loss, log_loss, auc_pr_list = current_stats          
+    m_mtx = reshape_m_mtx(m_mtx_list)
+        
+    acc_conf_mtx += conf_mtx
+    acc_acc += acc
+    auc_list = np.nan_to_num(auc_list)
+    acc_auc_list += auc_list
+    m_mtx = np.nan_to_num(m_mtx)
+    acc_m_mtx += m_mtx
+    acc_loss += loss
+    acc_log_loss += log_loss
+    acc_auc_pr_list += auc_pr_list
+    
+    return (acc_conf_mtx, acc_acc, acc_auc_list, acc_m_mtx, acc_loss, acc_log_loss, acc_auc_pr_list)
 
 def reset_and_update(sess, feed_dict):
     """Reset the local variables and update the necessary update ops."""
     sess.run('init/local/init')
+    
+#    update_names_list = [
+#        'metrics/m_measure/' + str(i) + str(j) + '/hist_accumulate/update_op'
+#        for i in range(7) for j in range(7) if i != j
+#    ]
+    
     update_names_list = [
         'metrics/auc/{:d}/hist_accumulate/update_op'.format(i)
         for i in range(7)
     ]
-    update_names_list.extend([
-        'metrics/auc_pr/{:d}/hist_accumulate/update_op'.format(i)
-        for i in range(7)
-    ])
+#    update_names_list.extend([
+#        'metrics/auc_pr/{:d}/hist_accumulate/update_op'.format(i)
+#        for i in range(7)
+#    ])
     update_names_list.extend([
         'metrics/m_measure/' + str(i) + str(j) + '/hist_accumulate/update_op'
         for i in range(7) for j in range(7) if i != j
@@ -864,36 +989,34 @@ def reset_and_update(sess, feed_dict):
     return
 
 
-def get_metrics(sess, mode):
+def get_metrics(sess, feed_dict):
     """Get the accuracy over the dataset corresponding to the given mode."""
-    feed_dict = create_feed_dict(mode, DATA, FLAGS)
+    # feed_dict = create_feed_dict(mode, DATA, FLAGS)
     reset_and_update(sess, feed_dict)
     
     model_metrics = sess.run(
         [
             'metrics/confusion/SparseTensorDenseAdd:0',
             'metrics/accuracy:0', 
-            'metrics/auc:0', # 'metrics/auc/0/auc:0', # this is for showing the first position of array!!
+            'metrics/auc:0', 
             'metrics/m_measure:0',
-            #'metrics/intlabels:0',
-            #'metrics/predictions:0',
-            #'metrics/probs:0',
+            'loss:0',
             'metrics/log_loss:0',
             'metrics/auc_pr:0',            
         ],    
         feed_dict=feed_dict)    
     #pmetrics = tf.Print(metrics, [metrics], message='Metrics: ')
     # print(pmetrics.eval(Session=sess))
-    print('get_metrics: SparseTensorDenseAdd, accuracy, auc_roc, m_measure, log_loss, auc_pr: ', model_metrics)
+    # print('get_metrics: SparseTensorDenseAdd, accuracy, auc_roc, m_measure, loss, log_loss, auc_pr: ', model_metrics)
     # output = sess.run('input_normalization/9_softmax_linear', feed_dict=feed_dict)
     return model_metrics
 
 
-def train_and_summarize(sess, writers, step):
+def train_and_summarize(sess, writers, step, feed_dict):
     """Train and record execution metadata for use in TB."""
     batch_writer = writers['batch']
-    summary, batch_loss, _ = sess.run(
-        ['Merge/MergeSummary:0', 'loss:0', 'train'], feed_dict=create_feed_dict('batch', DATA, FLAGS))
+    summary, _ = sess.run(
+        ['Merge/MergeSummary:0', 'train'], feed_dict=feed_dict)
     # Do __not__ delete the following lines. I've disabled these just to make
     # the program faster; however, these would write metadata to TB.
 
@@ -911,17 +1034,12 @@ def train_and_summarize(sess, writers, step):
 
     batch_writer.add_summary(summary, step)
     batch_writer.flush()
-
-    # write_summaries(sess, writers, 'train', step)
-    write_summaries(sess, writers, 'valid', step)
-    print('train_and_summarize: ', summary)
-    return batch_loss
+    return
 
 
-def write_summaries(sess, writers, mode, step):
+def write_summaries(sess, writers, mode, step, feed_dict):
     """Get the summary protobuf and write it to the Summary.FileWriter."""
-    writer = writers[mode]
-    feed_dict = create_feed_dict(mode, DATA, FLAGS)
+    writer = writers[mode]    
     reset_and_update(sess, feed_dict)
     summary = sess.run('Merge/MergeSummary:0', feed_dict=feed_dict)
     writer.add_summary(summary, step)
@@ -982,8 +1100,8 @@ def create_feed_dict(tag, DATA, FLAGS):
     
     return feed_d
 
-def retrieve_tf_model():
-    checkpoint_file = os.path.join(Path(FLAGS.logdir), 'my_test_model-1000.meta')
+def retrieve_tf_model(name, net_number):
+    checkpoint_file = os.path.join(Path(FLAGS.logdir), name + '_' + str(net_number) +'.meta')
     print(checkpoint_file)
     # with tf.Session() as sess:    
     sess = tf.Session()
@@ -1009,9 +1127,9 @@ def main(_):
 
     # Hyperparameters
     #print("FLAGS.epoch_num", FLAGS.epoch_num)
-    FLAGS.epoch_num = 20  # 14  # 17  # 35  # 15
+    FLAGS.epoch_num = 50  # 14  # 17  # 35  # 15
     #print("FLAGS.epoch_num", FLAGS.epoch_num)
-    FLAGS.batch_size = 256  # do NOT increase this to 1024 # 64  # 128  #
+    FLAGS.batch_size = 4086  # do NOT increase this to 1024 # 64  # 128  #
     FLAGS.dropout_keep = 0.9  # 0.9  # 0.95  # .75  # .6
     # ### parameters for training optimizer.
     FLAGS.learning_rate = .25  # .075  # .15  # .25
@@ -1020,7 +1138,7 @@ def main(_):
     # ### parameters for inverse_time_decay
     FLAGS.decay_rate = 1
     FLAGS.decay_step = 1 * 80000
-    FLAGS.rate_min = .015
+    FLAGS.rate_min = .0015
     # ### parameters for exponential_decay
     # FLAGS.decay_base = .96  # .96
     # FLAGS.decay_step = 15000  # 12320  # 4 * 8700
@@ -1034,7 +1152,14 @@ def main(_):
     FLAGS.test_flag = True
     FLAGS.xla = True  # False
     FLAGS.stratified_flag = False
+    FLAGS.batch_layer_type = 'batch'
 
+    if tf.gfile.Exists(FLAGS.logdir):
+       tf.gfile.DeleteRecursively(FLAGS.logdir)
+    tf.gfile.MakeDirs(FLAGS.logdir)
+
+    np.random.seed(RANDOM_SEED)  # pylint: disable=no-member
+    DATA = md.get_h5_data()
     # Architecture	
     architecture = {
         'n_input': DATA.validation.features.shape[1],
@@ -1050,23 +1175,13 @@ def main(_):
     if (FLAGS.n_hidden > 0) and (FLAGS.n_hidden != len(FLAGS.s_hidden)) : raise ValueError('Sizes in hidden layers should match!')
     for hid_i in range(1, FLAGS.n_hidden+1):
         architecture['n_hidden_{:1d}'.format(hid_i)] = FLAGS.s_hidden[hid_i-1]
-    '''
-    for hid_i in range(1, FLAGS.n_hidden + 1):
-            hidden_out = nn_layer(hidden_out,
-                                  architecture['n_hidden_{:1d}'.format(hid_i)],
-                                  '{:1d}_hidden'.format(hid_i), act)
-    '''
     print('architecture', architecture)
-    #print("FLAGS.n_hidden", FLAGS.n_hidden)
-    #FLAGS.n_hidden = len(architecture) - 2
-    #print("FLAGS.n_hidden", FLAGS.n_hidden)
-
-    if tf.gfile.Exists(FLAGS.logdir):
-       tf.gfile.DeleteRecursively(FLAGS.logdir)
-    tf.gfile.MakeDirs(FLAGS.logdir)
-
-    graph = build_graph(architecture, FLAGS.learning_rate)
-    run_model(graph)
+    
+    graph = build_graph(architecture, FLAGS)        
+    run_model(graph, 'Data1-100_batch_type', 1,  FLAGS, DATA)
+    FLAGS.batch_layer_type = 'layer'
+    graph = build_graph(architecture, FLAGS)        
+    run_model(graph, 'Data1-100_layer_type', 2,  FLAGS, DATA)
     return
 
 
@@ -1108,13 +1223,18 @@ def update_parser(parser):
         '--s_hidden',
         type=int,
         nargs='*',
-        default=[100, 70, 70],
+        default=[100, 140, 140],
         help='Size of each hidden layer.')
     parser.add_argument(
         '--stratified_flag',
         type=bool,
         default=False,
         help='Execute Stratified Sampling of the DataSet by Delinquency Status')
+    parser.add_argument(
+        '--batch_layer_type',
+        type=str,
+        default='layer',
+        help='Select the layer type for batch normalization')
     return parser.parse_known_args()
 
 
@@ -1126,9 +1246,9 @@ FLAGS.weighted_sampling = False  # True  #
 # %%
 if __name__ == '__main__':    
     # random seed for the mnist iterator
-    np.random.seed(RANDOM_SEED)  # pylint: disable=no-member
+    # np.random.seed(RANDOM_SEED)  # pylint: disable=no-member
     # DATA = md.get_data(220000, 20000, 20000, FLAGS.weighted_sampling, dataset_name='MORT', stratified_flag = FLAGS.stratified_flag, refNorm=True)  # 'MNIST')
-    DATA = md.get_h5_data()
+    # DATA = md.get_h5_data()
     # print(DATA.validation.labels.sum(axis=0))
     # main(1)
     # print("before tf.app.run(...)")    

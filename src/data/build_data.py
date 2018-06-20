@@ -164,7 +164,7 @@ def extract_numeric_labels(data, label_column='MBA_DELINQUENCY_STATUS_next'):
 def allfeatures_extract_labels(data, columns='MBA_DELINQUENCY_STATUS_next'):
      logger.name = 'allfeatures_extract_labels'
      if (type(columns)==str):
-         indices = [i for i, elem in enumerate(data.columns) if columns in elem]
+         indices = [i for i, elem in enumerate(data.columns) if columns in elem] # (alphabetically ordered)
      else:
         indices =  columns 
         
@@ -276,7 +276,7 @@ def oneHotDummies_column(column, categories):
     '''    
     logger.name = 'oneHotDummies_column: ' +  column.name
     cat_column = pd.Categorical(column.astype('str'), categories=categories)
-    cat_column = pd.get_dummies(cat_column)    
+    cat_column = pd.get_dummies(cat_column)   # in the same order as categories! (alphabetically ordered) 
     cat_column = cat_column.add_prefix(column.name + '_')
     return cat_column
     

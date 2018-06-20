@@ -30,12 +30,17 @@ from tensorflow.python.framework import ops
 from sklearn import metrics
 import math
 import pandas as pd
-# import mort_data
+from datetime import datetime
+import glob
+from os.path import abspath
+from pathlib import Path
+from inspect import getsourcefile
 
 
 RANDOM_SEED = 123  # Set the seed to get reproducable results.
 DT_FLOAT = tf.float32
 NP_FLOAT = np.dtype('float32')
+PRO_DIR = os.path.join(Path(abspath(getsourcefile(lambda:0))).parents[2], 'data', 'processed') 
 
 # TO1DO(vahid):
 # 1.   Change the M-measure to H-measure proposed by Hand et al.
@@ -175,7 +180,7 @@ def bias_variable(name, shape, layer_name):
     return bias
 
 
-def dropout_layer(name, tensor_before):
+def dropout_layer(name, tensor_before, dropout):
     """Compute dropout to tensor_before with name scoping and a placeholder for keep_prob. 
     With probability keep_prob, outputs the input element scaled up by 1 / keep_prob, otherwise outputs 0.
     
@@ -186,7 +191,7 @@ def dropout_layer(name, tensor_before):
         Variable Tensor of the same shape of tensor_before.
     """   
     
-    if not FLAGS.dropout:
+    if not dropout:
         print('There is not dropout for' + name)
         return tensor_before
     with tf.name_scope(name) as scope:
@@ -246,9 +251,9 @@ def layer_normalization(name, input_tensor):
     return normalized
 
 
-def normalize(name, input_tensor, batch_type, train_flag):
+def normalize(name, input_tensor, batch_type, train_flag, batch_norm):
     """Perform either type (batch/layer) of normalization."""
-    if not FLAGS.batch_norm:
+    if not batch_norm:
         return input_tensor
     if batch_type.lower() == 'batch':
         return batch_normalization(name, input_tensor, train_flag)
@@ -257,7 +262,7 @@ def normalize(name, input_tensor, batch_type, train_flag):
     raise ValueError('Invalid value for batch_type: ' + batch_type)
 
 
-def nn_layer(input_tensor, output_dim, layer_name, batch_type, act, reg_rate, train_flag):
+def nn_layer(input_tensor, output_dim, layer_name, batch_type, act, reg_rate, train_flag, dropout, batch_norm):
     """Create a simple neural net layer.
 
     It performs the affine transformation and uses the activation function to
@@ -271,7 +276,7 @@ def nn_layer(input_tensor, output_dim, layer_name, batch_type, act, reg_rate, tr
         # batch normalization and drop out. batch # normalization has to stay
         # __before__ the drop out layer.
         variable_summaries('input', input_tensor)
-        input_tensor = dropout_layer('dropout', input_tensor)
+        input_tensor = dropout_layer('dropout', input_tensor, dropout)
         with tf.name_scope('mix'):
             mixed = tf.matmul(input_tensor, weights)
             tf.summary.histogram('maybe_guassian', mixed)
@@ -283,7 +288,7 @@ def nn_layer(input_tensor, output_dim, layer_name, batch_type, act, reg_rate, tr
         # normalizing x = W u + b```
         # biases = bias_variable('biases', [output_dim], layer_name)
         preactivate = normalize('layer_normalization', mixed,
-                                batch_type, train_flag)  # + biases
+                                batch_type, train_flag, batch_norm)  # + biases
         # tf.summary.histogram('pre_activations', preactivate)
         # preactivate = dropout_layer('dropout', preactivate)
         with tf.name_scope('activation') as scope:
@@ -292,7 +297,7 @@ def nn_layer(input_tensor, output_dim, layer_name, batch_type, act, reg_rate, tr
     return activations
 
 
-def calculate_loss(labels, logits, weights):
+def calculate_loss(labels, logits, weights, reg_rate):
     """Calculate the loss from the logits and the labels.
     Returns a list of regularization losses as Tensors and Creates a cross-entropy 
     loss using tf.nn.softmax_cross_entropy_with_logits.
@@ -311,7 +316,7 @@ def calculate_loss(labels, logits, weights):
         with tf.name_scope('regularization'):
             penalty = tf.losses.get_regularization_loss(name='penalty') #Gets the total regularization loss from an optional scope name (sum for ol + 3h + 2h + 1h).
             # print_penalty = tf.Print(penalty, [penalty], name='print_penalty') # penalty is equal to print_penalty, it is a scalar, I guess from only the output layer
-            tf.summary.scalar('weight_norm', penalty / (1e-8 + FLAGS.reg_rate)) #for printing out
+            tf.summary.scalar('weight_norm', penalty / (1e-8 + reg_rate)) #for printing out
         with tf.name_scope('cross_entropy') as xentropy_scope:
             # ## hard (sparse) softmax: only one class can be active.
             # labels = tf.to_int64(labels)
@@ -340,7 +345,7 @@ def calculate_loss(labels, logits, weights):
         return tf.add(weighted_cross_entropy, penalty, name=scope) # Returns x + y element-wise.
 
 
-def train(loss, learning_rate):
+def train(loss, FLAGS):
     """Set up the training Ops.
 
     Create an optimizer and apply the gradients to all trainable variables. The
@@ -387,7 +392,7 @@ def train(loss, learning_rate):
                 shape=[],
                 initializer=tf.constant_initializer(0, dtype=tf.int32),
                 trainable=False)
-            final_learning_rate = get_learning_rate(learning_rate, global_step)
+            final_learning_rate = get_learning_rate(FLAGS.learning_rate, global_step)
 
             # optimizer = tf.train.GradientDescentOptimizer(final_learning_rate)
             # optimizer = tf.train.MomentumOptimizer(
@@ -655,7 +660,7 @@ def calculate_metrics(labels, logits):
     return accuracy, conf_mtx, auc, m_list, loss, pr_auc, pr_data 
 
 
-def add_hidden_layers(features, architecture, n_hidden, batch_type, reg_rate, train_flag, act=tf.nn.relu):
+def add_hidden_layers(features, architecture, n_hidden, batch_type, reg_rate, train_flag, dropout, batch_norm, act=tf.nn.relu):
     """Add hidden layers to the model using the architecture parameters."""
     hidden_out = features
     jit_scope = tf.contrib.compiler.jit.experimental_jit_scope #JIT compiler compiles and runs parts of TF graphs via XLA, fusing multiple operators (kernel fusion) nto a small number of compiled kernels.
@@ -663,7 +668,7 @@ def add_hidden_layers(features, architecture, n_hidden, batch_type, reg_rate, tr
         for hid_i in range(1, n_hidden + 1):
             hidden_out = nn_layer(hidden_out,
                                   architecture['n_hidden_{:1d}'.format(hid_i)],
-                                  '{:1d}_hidden'.format(hid_i), batch_type, act, reg_rate, train_flag)
+                                  '{:1d}_hidden'.format(hid_i), batch_type, act, reg_rate, train_flag, dropout, batch_norm)
     return hidden_out
 
 
@@ -683,10 +688,10 @@ def inference(features, architecture, FLAGS):
         variable_summaries('input_normalized', feature_norm)
 
     hidden_out = add_hidden_layers(feature_norm, architecture, FLAGS.n_hidden, FLAGS.batch_layer_type,
-                                   FLAGS.reg_rate, train_flag)
+                                   FLAGS.reg_rate, train_flag, FLAGS.dropout, FLAGS.batch_norm)
     # Linear output layer for the logits
     logits = (nn_layer(hidden_out, architecture['n_classes'],
-                       '9_softmax_linear', FLAGS.batch_layer_type, tf.identity, FLAGS.reg_rate, train_flag))    
+                       '9_softmax_linear', FLAGS.batch_layer_type, tf.identity, FLAGS.reg_rate, train_flag, FLAGS.dropout, FLAGS.batch_norm))    
     return logits
 
 
@@ -717,11 +722,11 @@ def build_graph(architecture, FLAGS):
         example_weights = tf.placeholder(
             DT_FLOAT, [None], name='example_weights')
         logits = inference(features, architecture, FLAGS) #makes all processing from input (features) to output (nn_layer) but with tf.placeholders
-        loss = calculate_loss(labels, logits, example_weights)
+        loss = calculate_loss(labels, logits, example_weights, FLAGS.reg_rate)
         # Accuracy is only for reporting purposes, won't be used to train.
         accuracy, conf_mtx, auc_list, m_list, lloss, auc_pr, auc_data = calculate_metrics( # ---, labels_int, predictions, probs, pr_auc
             labels, logits)
-        train(loss, FLAGS.learning_rate)
+        train(loss, FLAGS)
         with tf.name_scope('0_performance'):
             # Scalar summaries to track the loss and accuracy over time in TB.
             tf.summary.scalar('0accuracy', accuracy)
@@ -783,7 +788,7 @@ def run_model(comp_graph, name, net_number, FLAGS, DATA):
                 bett_acc_test, m_mtx_mean_test, auc_aoc_mean_test, auc_pr_mean_test = print_stats(test_metrics, 'test')                
                 dtype = ['NN_name', 'NN_Number','Loss','LogLoss','Accuracy','Better-Accuracy','M-Measure Mean','AUC_AOC Mean','AUC_PR Mean']
                 pd.DataFrame(data=[(name, net_number, test_metrics[4], test_metrics[5], test_metrics[1], bett_acc_test, m_mtx_mean_test, auc_aoc_mean_test, auc_pr_mean_test)], 
-                             columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name + '_' + str(net_number) +"test_history.csv"), index=False, mode='a')
+                             columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name + '_' + str(net_number) +"_test_history.csv"), index=False, mode='a')
                 
     return
 
@@ -793,9 +798,7 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
 
     def train_one_epoch(epoch, batch_size):
         print("Epoch: ", epoch)		
-        batch_num = math.ceil(float(DATA.train.num_examples / batch_size))
-        # print('batch_num:', batch_num)  
-        
+        batch_num = math.ceil(float(DATA.train.num_examples / batch_size))        
         acc_conf_mtx=np.zeros((DATA.train.num_classes, DATA.train.num_classes))
         acc_acc = 0
         acc_auc_list = np.zeros((DATA.train.num_classes))
@@ -805,11 +808,14 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
         acc_auc_pr_list = np.zeros((DATA.train.num_classes))
         
         epoch_metrics = (acc_conf_mtx, acc_acc, acc_auc_list, acc_m_mtx, acc_loss, acc_log_loss, acc_auc_pr_list)
+        start_time = datetime.now()
         for batch_i in range(batch_num):
+            batch_time = datetime.now()
+            print("batch Number: ", batch_i)
             batch_dict= create_feed_dict('batch', DATA, FLAGS)
             step = epoch * batch_num + batch_i            
             if step > 0 and (step * batch_size) % (DATA.train.num_examples) < batch_size:                
-                print ('(step * batch_size) % (DATA.train.num_examples): ', (step * batch_size) % (DATA.train.num_examples))
+                # print ('(step * batch_size) % (DATA.train.num_examples): ', (step * batch_size) % (DATA.train.num_examples))
                 train_and_summarize(sess, writers, step, batch_dict)                
             else:                
                 _ = sess.run(['train'], feed_dict=batch_dict)                
@@ -817,10 +823,13 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
             batch_metrics = get_metrics(sess, batch_dict)        
             epoch_metrics = batch_stats(epoch_metrics, batch_metrics) 
             feed_valid = create_feed_dict('valid', DATA, FLAGS)            
-            write_summaries(sess, writers, 'valid', step, feed_valid)            
+            write_summaries(sess, writers, 'valid', step, feed_valid)
+            print('Batch Time: ', datetime.now() - batch_time)            
         # The division should stay outside the inner for loop.
         epoch_metrics = (epoch_metrics[0], epoch_metrics[1]/batch_num, epoch_metrics[2]/batch_num, epoch_metrics[3]/batch_num, 
                          epoch_metrics[4], epoch_metrics[5], epoch_metrics[6]/batch_num)
+        
+        print('Epoch Time: ', datetime.now() - start_time)
         
         return epoch_metrics 
 
@@ -867,7 +876,7 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
     
     dtype = ['epoch','Loss','LogLoss','Accuracy','Better-Accuracy','M-Measure Mean','AUC_AOC Mean','AUC_PR Mean']
     pd.DataFrame(data=train_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name + '_' + str(net_number) +"_train_history.csv"), index=False)
-    pd.DataFrame(data=valid_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name + '_' + str(net_number) +"valid_history.csv"), index=False)
+    pd.DataFrame(data=valid_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name + '_' + str(net_number) +"_valid_history.csv"), index=False)
     return 
 
 
@@ -1100,7 +1109,7 @@ def create_feed_dict(tag, DATA, FLAGS):
     
     return feed_d
 
-def retrieve_tf_model(name, net_number):
+def retrieve_tf_model(name, net_number, FLAGS):
     checkpoint_file = os.path.join(Path(FLAGS.logdir), name + '_' + str(net_number) +'.meta')
     print(checkpoint_file)
     # with tf.Session() as sess:    
@@ -1108,28 +1117,20 @@ def retrieve_tf_model(name, net_number):
     new_saver = tf.train.import_meta_graph(checkpoint_file)
     new_saver.restore(sess, tf.train.latest_checkpoint(Path(FLAGS.logdir)))
 
-def retrieve_FLAGS():
-    return FLAGS
 ##########################
 # ## SETTINGS
 ##########################
-def main(_):
-    print("Run the main program.")
-    # # Number of Training Examples: 55_000
-    # # Number of Validation Examples: 5_000
-    # # Number of Test Examples: 10_000
-    # # training batches per epoch (using a batch size of 64): 859
-
+    
+def FLAGS_setting(FLAGS, flag_num):
     # To determine an optimal set of hyperparameters, see Section 11.4.2 of the
     # deep learning book. Has (1) grid, (2) random, and (3) Bayesian
     # model-based search methods.Swersky et al. have a paper mentioned in that
     # section (published in 2014).
 
     # Hyperparameters
-    #print("FLAGS.epoch_num", FLAGS.epoch_num)
     FLAGS.epoch_num = 50  # 14  # 17  # 35  # 15
     #print("FLAGS.epoch_num", FLAGS.epoch_num)
-    FLAGS.batch_size = 4086  # do NOT increase this to 1024 # 64  # 128  #
+    FLAGS.batch_size = 1024  
     FLAGS.dropout_keep = 0.9  # 0.9  # 0.95  # .75  # .6
     # ### parameters for training optimizer.
     FLAGS.learning_rate = .25  # .075  # .15  # .25
@@ -1152,37 +1153,62 @@ def main(_):
     FLAGS.test_flag = True
     FLAGS.xla = True  # False
     FLAGS.stratified_flag = False
-    FLAGS.batch_layer_type = 'batch'
+    FLAGS.batch_layer_type = 'layer'    
+    FLAGS.weighted_sampling = False  # True  #
+    FLAGS.logdir = '/real_summaries'
+    FLAGS.n_hidden = 3
+    FLAGS.s_hidden = [100, 140, 140]
+    
+    if FLAGS.n_hidden < 0 : raise ValueError('The size of hidden layer must be at least 0')
+    if (FLAGS.n_hidden > 0) and (FLAGS.n_hidden != len(FLAGS.s_hidden)) : raise ValueError('Sizes in hidden layers should match!')
+    
+    if (flag_num==0):
+        FLAGS.name ='default_settings'
+        return FLAGS
+    elif (flag_num==1):
+        FLAGS.name ='batch_layer_type'
+        FLAGS.batch_layer_type = 'batch'
+        return FLAGS
 
-    if tf.gfile.Exists(FLAGS.logdir):
-       tf.gfile.DeleteRecursively(FLAGS.logdir)
-    tf.gfile.MakeDirs(FLAGS.logdir)
-
-    np.random.seed(RANDOM_SEED)  # pylint: disable=no-member
-    DATA = md.get_h5_data()
+def architecture_settings(DATA, FLAGS):
     # Architecture	
     architecture = {
         'n_input': DATA.validation.features.shape[1],
-        #'n_hidden_1': 100,  # 200,  # 2 * 256,  # 512, # 128,
-        #'n_hidden_2': 140,  # 256,
-        # 'n_hidden_3': 140,  # 128,
-        # 'n_hidden_4': 140,
-        # 'n_hidden_5': 140,
         'n_classes': DATA.validation.num_classes
     }
-    print('len(FLAGS.s_hidden)', len(FLAGS.s_hidden))
-    if FLAGS.n_hidden < 0 : raise ValueError('The size of hidden layer must be at least 0')
-    if (FLAGS.n_hidden > 0) and (FLAGS.n_hidden != len(FLAGS.s_hidden)) : raise ValueError('Sizes in hidden layers should match!')
     for hid_i in range(1, FLAGS.n_hidden+1):
         architecture['n_hidden_{:1d}'.format(hid_i)] = FLAGS.s_hidden[hid_i-1]
-    print('architecture', architecture)
-    
-    graph = build_graph(architecture, FLAGS)        
-    run_model(graph, 'Data1-100_batch_type', 1,  FLAGS, DATA)
-    FLAGS.batch_layer_type = 'layer'
-    graph = build_graph(architecture, FLAGS)        
-    run_model(graph, 'Data1-100_layer_type', 2,  FLAGS, DATA)
-    return
+    print('architecture', architecture)    
+    return architecture
+
+def main(_):
+    print("Run the main program.")
+
+    FLAGS, UNPARSED = update_parser(argparse.ArgumentParser())
+    print("FLAGS", FLAGS)
+    print("UNPARSED", UNPARSED)    
+        
+    if tf.gfile.Exists(FLAGS.logdir):
+       tf.gfile.DeleteRecursively(FLAGS.logdir)
+    tf.gfile.MakeDirs(FLAGS.logdir)    
+
+    conf_number = 2    
+    subdir_name = 'chunks_all_c100th'
+    for file_path in glob.glob(os.path.join(PRO_DIR, subdir_name,"*.h5")):  
+        file_name = os.path.basename(file_path)
+        print('Dataset: ' + file_name)
+        np.random.seed(RANDOM_SEED)  # pylint: disable=no-member
+        DATA = md.get_h5_data(subdir_name, file_name) #'temporalloandynmodifmrstaticitur1-100th-pp.h5'
+        for i in range(conf_number):
+            startTime = datetime.now()            
+            FLAGS = FLAGS_setting(FLAGS, i)
+            architecture = architecture_settings(DATA, FLAGS)
+            graph = build_graph(architecture, FLAGS)        
+            run_model(graph, file_name + '_' + FLAGS.name, i,  FLAGS, DATA)
+            print('Total Training Time for: ' + FLAGS.name, datetime.now() - startTime)
+    #FLAGS = FLAGS_setting(FLAGS, 1)
+    #graph = build_graph(architecture, FLAGS)        
+    #run_model(graph, 'Data1-100_' + FLAGS.name, 1,  FLAGS, DATA)    
 
 
 def update_parser(parser):
@@ -1235,44 +1261,16 @@ def update_parser(parser):
         type=str,
         default='layer',
         help='Select the layer type for batch normalization')
+    parser.add_argument(
+        '--name',
+        type=str,
+        default='',
+        help='Hyperparameters configuration')
     return parser.parse_known_args()
-
-
-FLAGS, UNPARSED = update_parser(argparse.ArgumentParser())
-print("FLAGS", FLAGS)
-print("UNPARSED", UNPARSED)
-FLAGS.weighted_sampling = False  # True  #
 
 # %%
 if __name__ == '__main__':    
-    # random seed for the mnist iterator
-    # np.random.seed(RANDOM_SEED)  # pylint: disable=no-member
-    # DATA = md.get_data(220000, 20000, 20000, FLAGS.weighted_sampling, dataset_name='MORT', stratified_flag = FLAGS.stratified_flag, refNorm=True)  # 'MNIST')
-    # DATA = md.get_h5_data()
-    # print(DATA.validation.labels.sum(axis=0))
-    # main(1)
-    # print("before tf.app.run(...)")    
-    tf.app.run(main=main, argv=[sys.argv[0]] + UNPARSED)
-
-    # # # temp_cov = np.cov(DATA.train.orig.features.T)
-    # # # _, xx, v = np.linalg.svd(temp_cov)
-    # # # print(xx)
-    # # # print(xx / xx.sum())
-    # from sklearn.decomposition import PCA
-    # from sklearn.preprocessing import QuantileTransformer
-    # from sklearn.preprocessing import RobustScaler
-    # data = DATA.train.orig.features
-    # normalizer1 = QuantileTransformer(output_distribution='uniform')
-    # # normalizer1 = RobustScaler(quantile_range=(5.0, 95.0))
-    # data1 = normalizer1.fit_transform(data)
-    # pca = PCA(n_components=.99, svd_solver='full')
-    # pca.fit(data1)
-    # print(pca.explained_variance_)
-    # print(pca.explained_variance_ratio_)
-    # # print(pca.singular_values_)
-
-# bash commmand:
-# tensorboard --logdir=/tmp/tensorflow/real/logs/real_summaries/
+    tf.app.run(main=main, argv=[sys.argv[0]])
 
 # Very useful blog on imbalanced data:
 # http://www.kdnuggets.com/2016/08/learning-from-imbalanced-classes.html

@@ -24,8 +24,8 @@ import make_dataset as md
 import numpy as np
 import tensorflow as tf
 from tensorboard import summary as summary_lib
-from tensorflow.examples.tutorials.mnist import input_data
-from tensorflow.python.client import timeline
+# from tensorflow.examples.tutorials.mnist import input_data
+# from tensorflow.python.client import timeline
 from tensorflow.python.framework import ops
 from sklearn import metrics
 import math
@@ -146,12 +146,12 @@ def create_weights(name, shape, reg_rate):
         stddev=(1.0 / np.sqrt(shape[0])), dtype=dtype)
 
     regularizer = tf.contrib.layers.l1_regularizer(
-        float(reg_rate), 'penalty')
+        np.float32(reg_rate), 'penalty')
     return _create_variable(name, shape, kernel_initializer, regularizer,
                             dtype)
 
 
-def bias_variable(name, shape, layer_name):
+def bias_variable(name, shape, layer_name, weighted_sampling): # FLAGS.weighted_sampling
     """Create a bias variable with appropriate initialization. In case of FLAGS.weighted_sampling==False
     and layer_name contains 'soft' the bias variable will contain a np.array of Negative values. Otherwise
     the bias variable will be initialized in zero.
@@ -166,7 +166,7 @@ def bias_variable(name, shape, layer_name):
 
     def initial_bias(layer_name):
         """Get the initial value for the bias of the layer with layer_name."""
-        if (not FLAGS.weighted_sampling) and 'soft' in layer_name:
+        if (not weighted_sampling) and 'soft' in layer_name:
             return np.array(
                 [-4.66, -3.81, -4.81, -3.90, -0.08, -3.90, -7.51],
                 dtype=NP_FLOAT) + NP_FLOAT(4.1)
@@ -587,7 +587,7 @@ def get_auc_pr_curve(labels, scores, name, num_thresholds):
             
             AUC_data.append((tf.stack(data.recall), tf.stack(data.precision), tf.stack(data.thresholds)))   # we cant use sklearn with tensorflow definition!
             auc, _ = tf.metrics.auc(labels[:, i], scores[:, i], weights=None, num_thresholds=10, 
-                                    curve='PR', updates_collections=ops.GraphKeys.UPDATE_OPS, metrics_collections=None) # summation_method='careful_interpolation'
+                                    curve='PR', updates_collections=ops.GraphKeys.UPDATE_OPS, metrics_collections=None, summation_method='careful_interpolation') # 
             # ops.add_to_collections(ops.GraphKeys.UPDATE_OPS, update_op)
             AUC_PR.append(auc)
         # print(AUC_data)
@@ -610,7 +610,7 @@ def log_loss(labels, probs):
         loss = metrics.log_loss(labels[:, j], probs[:, j])
         total_loss += loss
 
-    total_loss /= float(probs.shape[1])
+    total_loss /= np.float32(probs.shape[1])
     
     return total_loss
 
@@ -628,7 +628,7 @@ def log_loss(labels, probs, name):
             loss = tf.losses.log_loss(labels[:, j], probs[:, j], loss_collection=None)
             total_loss += loss
     
-        return tf.div(total_loss, float(probs.shape[1].value), name=scope)
+        return tf.div(total_loss, np.float32(probs.shape[1].value), name=scope)
                       
 
 def calculate_metrics(labels, logits):
@@ -763,10 +763,11 @@ def build_graph(architecture, FLAGS):
 ###############################
 def run_model(comp_graph, name, net_number, FLAGS, DATA):
     """Run the model represented by the input computation graph."""
-    config = tf.ConfigProto() # is a configuring class for the graph.
+    config = tf.ConfigProto() # tf.ConfigProto(log_device_placement=True, allow_soft_placement=True) # is a configuring class for the graph.
     # Turns on XLA JIT compilation if the XLA flag is on.
     jit_level = tf.OptimizerOptions.ON_1 if FLAGS.xla else 0  # pylint: disable=no-member  # tf.OptimizerOptions.ON_1: IT compilation is turned on at the session level
     config.graph_options.optimizer_options.global_jit_level = jit_level  # pylint: disable=no-member
+    # config.gpu_options.allow_growth = True
     with tf.Session(graph=comp_graph, config=config) as sess:
         writers = {
             'batch': tf.summary.FileWriter(FLAGS.logdir + '/batch',
@@ -777,18 +778,22 @@ def run_model(comp_graph, name, net_number, FLAGS, DATA):
                 FLAGS.logdir + '/valid', graph=None)
         }
         try:
-            
-            batch_training(sess, writers, name, net_number, FLAGS, DATA)
+            start_time = datetime.now()
+            return_epoch = batch_training(sess, writers, name, net_number, FLAGS, DATA)
+            end_time = datetime.now() - start_time
+            print('Total Training Time for: ' + FLAGS.name, end_time)
         finally:
             for mode in writers:
                 writers[mode].close()
             if FLAGS.test_flag:
+                end_time = datetime.now() - start_time
+                return_epoch = 0
                 feed_test = create_feed_dict('test', DATA, FLAGS)
                 test_metrics = get_metrics(sess, feed_test)
                 bett_acc_test, m_mtx_mean_test, auc_aoc_mean_test, auc_pr_mean_test = print_stats(test_metrics, 'test')                
-                dtype = ['NN_name', 'NN_Number','Loss','LogLoss','Accuracy','Better-Accuracy','M-Measure Mean','AUC_AOC Mean','AUC_PR Mean']
-                pd.DataFrame(data=[(name, net_number, test_metrics[4], test_metrics[5], test_metrics[1], bett_acc_test, m_mtx_mean_test, auc_aoc_mean_test, auc_pr_mean_test)], 
-                             columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name + '_' + str(net_number) +"_test_history.csv"), index=False, mode='a')
+                dtype = ['NN_name', 'NN_Number','Total Epochs', 'Execute Epochs', 'Total Training Time', 'Loss','LogLoss','Accuracy','Better-Accuracy','M-Measure Mean','AUC_AOC Mean','AUC_PR Mean']
+                pd.DataFrame(data=[(name, net_number, FLAGS.epoch_num, return_epoch, end_time,test_metrics[4], test_metrics[5], test_metrics[1], bett_acc_test, m_mtx_mean_test, auc_aoc_mean_test, auc_pr_mean_test)], 
+                             columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name + "_test_history.csv"), index=False, mode='a')
                 
     return
 
@@ -798,7 +803,7 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
 
     def train_one_epoch(epoch, batch_size):
         print("Epoch: ", epoch)		
-        batch_num = math.ceil(float(DATA.train.num_examples / batch_size))        
+        batch_num = math.ceil(np.float32(DATA.train.num_examples / batch_size))        
         acc_conf_mtx=np.zeros((DATA.train.num_classes, DATA.train.num_classes))
         acc_acc = 0
         acc_auc_list = np.zeros((DATA.train.num_classes))
@@ -844,9 +849,10 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
     # best_weights = None
     train_history =[]
     valid_history=[]    
+    return_epoch = 0
 #    dtype = [('epoch','int32'), ('Loss','float64'), ('LogLoss','float64'), ('Accuracy','float64'), 
 #             ('Better-Accuracy','float64'), ('M-Measure Mean','float64'), ('AUC_AOC Mean','float64'), ('AUC_PR Mean','float64')]    
-    checkpoint_file = FLAGS.logdir + '/' + name + '_' + str(net_number) #'/model.ckpt' # os.path.join(FLAGS.logdir, 'model.ckpt')
+    checkpoint_file = FLAGS.logdir + '/' + name[:-4] + '_' + FLAGS.name + '_' + str(net_number) #'/model.ckpt' # os.path.join(FLAGS.logdir, 'model.ckpt')
     for epoch in range(FLAGS.epoch_num):
         epoch_metrics = train_one_epoch(epoch, FLAGS.batch_size)
         bett_acc_train, m_mtx_mean_train, auc_aoc_mean_train, auc_pr_mean_train = print_stats(epoch_metrics, 'train')        
@@ -872,12 +878,14 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
         else:
             if epoch - best_epoch == 10:
                 print('Stopping: Not Improve in Validation Set after 10 epochs')
+                return_epoch = epoch
                 break        
     
+    if return_epoch == 0: return_epoch = FLAGS.epoch_num
     dtype = ['epoch','Loss','LogLoss','Accuracy','Better-Accuracy','M-Measure Mean','AUC_AOC Mean','AUC_PR Mean']
-    pd.DataFrame(data=train_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name + '_' + str(net_number) +"_train_history.csv"), index=False)
-    pd.DataFrame(data=valid_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name + '_' + str(net_number) +"_valid_history.csv"), index=False)
-    return 
+    pd.DataFrame(data=train_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_train_history.csv"), index=False)
+    pd.DataFrame(data=valid_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_valid_history.csv"), index=False)
+    return return_epoch
 
 
 def reshape_m_mtx(mtx):
@@ -906,7 +914,7 @@ def print_stats(stats, name):
     
     if (name!='train'):
         m_mtx = reshape_m_mtx(m_mtx_list)
-        m_mtx_mean = float(m_mtx.sum()) / (49 - 7)
+        m_mtx_mean = np.float32(m_mtx.sum()) / (49 - 7)
         print('Avg Cost in ' + name +': {:.5f}'.format(loss))        
         print('Avg Log_Cost in ' + name +': {:.5f}'.format(log_loss))
         print(
@@ -934,7 +942,7 @@ def print_stats(stats, name):
 #            
 #        global_acc /= conf_mtx.shape[0]
         m_mtx = m_mtx_list
-        m_mtx_mean = float(m_mtx.sum()) / (49 - 7)
+        m_mtx_mean = np.float32(m_mtx.sum()) / (49 - 7)
         print(
             '{:s}:'.format(name),
             '(Silly) Batch-Avg_ACC={:.4f}, Better ACC={:.4f},'.format(acc, bett_acc),
@@ -1199,13 +1207,11 @@ def main(_):
         print('Dataset: ' + file_name)
         np.random.seed(RANDOM_SEED)  # pylint: disable=no-member
         DATA = md.get_h5_data(subdir_name, file_name) #'temporalloandynmodifmrstaticitur1-100th-pp.h5'
-        for i in range(conf_number):
-            startTime = datetime.now()            
+        for i in range(conf_number):                        
             FLAGS = FLAGS_setting(FLAGS, i)
             architecture = architecture_settings(DATA, FLAGS)
             graph = build_graph(architecture, FLAGS)        
-            run_model(graph, file_name + '_' + FLAGS.name, i,  FLAGS, DATA)
-            print('Total Training Time for: ' + FLAGS.name, datetime.now() - startTime)
+            run_model(graph, file_name[:-4], i,  FLAGS, DATA)            
     #FLAGS = FLAGS_setting(FLAGS, 1)
     #graph = build_graph(architecture, FLAGS)        
     #run_model(graph, 'Data1-100_' + FLAGS.name, 1,  FLAGS, DATA)    

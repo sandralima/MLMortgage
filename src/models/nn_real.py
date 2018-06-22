@@ -770,12 +770,10 @@ def run_model(comp_graph, name, net_number, FLAGS, DATA):
     # config.gpu_options.allow_growth = True
     with tf.Session(graph=comp_graph, config=config) as sess:
         writers = {
-            'batch': tf.summary.FileWriter(FLAGS.logdir + '/batch',
+            'batch': tf.summary.FileWriter(os.path.join(FLAGS.logdir, 'batch'),
                                            sess.graph),
-            'train': tf.summary.FileWriter(
-                FLAGS.logdir + '/train', graph=None),
-            'valid': tf.summary.FileWriter(
-                FLAGS.logdir + '/valid', graph=None)
+            'train': tf.summary.FileWriter(os.path.join(FLAGS.logdir, 'train'), graph=None),
+            'valid': tf.summary.FileWriter(os.path.join(FLAGS.logdir, 'valid'), graph=None)
         }
         try:
             start_time = datetime.now()
@@ -852,7 +850,7 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
     return_epoch = 0
 #    dtype = [('epoch','int32'), ('Loss','float64'), ('LogLoss','float64'), ('Accuracy','float64'), 
 #             ('Better-Accuracy','float64'), ('M-Measure Mean','float64'), ('AUC_AOC Mean','float64'), ('AUC_PR Mean','float64')]    
-    checkpoint_file = FLAGS.logdir + '/' + name[:-4] + '_' + FLAGS.name + '_' + str(net_number) #'/model.ckpt' # os.path.join(FLAGS.logdir, 'model.ckpt')
+    checkpoint_file = os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number)) #'/model.ckpt' # os.path.join(FLAGS.logdir, 'model.ckpt')
     for epoch in range(FLAGS.epoch_num):
         epoch_metrics = train_one_epoch(epoch, FLAGS.batch_size)
         bett_acc_train, m_mtx_mean_train, auc_aoc_mean_train, auc_pr_mean_train = print_stats(epoch_metrics, 'train')        
@@ -1165,7 +1163,7 @@ def FLAGS_setting(FLAGS, flag_num):
     FLAGS.weighted_sampling = False  # True  #
     FLAGS.logdir = '/real_summaries'
     FLAGS.n_hidden = 3
-    FLAGS.s_hidden = [100, 140, 140]
+    FLAGS.s_hidden = [200, 140, 140]
     
     if FLAGS.n_hidden < 0 : raise ValueError('The size of hidden layer must be at least 0')
     if (FLAGS.n_hidden > 0) and (FLAGS.n_hidden != len(FLAGS.s_hidden)) : raise ValueError('Sizes in hidden layers should match!')

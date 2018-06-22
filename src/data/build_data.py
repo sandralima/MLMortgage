@@ -560,7 +560,7 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
     robust_cols = np.delete(robust_cols,to_delete, 0)            
     
     target_path = os.path.join(PRO_DIR, raw_dir,file_name[:-4])
-    with  pd.HDFStore(target_path +'-pp.h5') as hdf:
+    with  pd.HDFStore(target_path +'-pp.h5', complib='blosc', complevel=9) as hdf:
         gflag = ''    
         i = 1            
         for chunk in pd.read_csv(file_path, chunksize = chunksize, sep=',', low_memory=False):    
@@ -597,7 +597,7 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
                 chunk[robust_cols] = robust_normalizer.transform(chunk[robust_cols])
                 chunk[minmax_cols] = minmax_normalizer.transform(chunk[minmax_cols])            
 
-            chunk.to_csv(target_path +'-pp.csv', mode='a', index=False) 
+            # chunk.to_csv(target_path +'-pp.csv', mode='a', index=False) 
             labels = allfeatures_extract_labels(chunk, columns=label)
             
             total_rows = chunk.shape[0]

@@ -58,7 +58,7 @@ class DataBatch(object):
             [1.0], dtype=np.dtype('float32'))  # temp_weights
 
 
-    def next_ooc_batch(self, batch_size):
+    def next_ooc_batch(self, batch_size, batch_type='train'):
         """Get the next batch of the data with the given batch size."""
         if not isinstance(batch_size, int):
             raise TypeError('DataBatch: batch_size has to be of int type.')
@@ -68,14 +68,14 @@ class DataBatch(object):
         if self._global_index + batch_size <= self._num_examples:            
 #            temp_features = self.features.iloc[self._global_index:self._global_index + batch_size, :]            
 #            temp_labels = self.labels.iloc[self._global_index:self._global_index + batch_size]
-            temp_features = pd.read_hdf(self.h5_path, 'train/features', start=self._global_index, stop=self._global_index + batch_size)
-            temp_labels = pd.read_hdf(self.h5_path, 'train/labels', start=self._global_index, stop=self._global_index + batch_size)            
+            temp_features = pd.read_hdf(self.h5_path, batch_type + '/features', start=self._global_index, stop=self._global_index + batch_size)
+            temp_labels = pd.read_hdf(self.h5_path, batch_type + '/labels', start=self._global_index, stop=self._global_index + batch_size)            
             self._global_index += batch_size            
         else:            
 #            temp_features = self.features.iloc[self._global_index:, :]
 #            temp_labels = self.labels.iloc[self._global_index:, :]                        
-            temp_features = pd.read_hdf(self.h5_path, 'train/features', start=self._global_index)            
-            temp_labels = pd.read_hdf(self.h5_path, 'train/labels', start=self._global_index)            
+            temp_features = pd.read_hdf(self.h5_path, batch_type + '/features', start=self._global_index)            
+            temp_labels = pd.read_hdf(self.h5_path, batch_type + '/labels', start=self._global_index)            
             # hdf = pd.read_hdf('storage.h5', 'd1', where=['A>.5'], columns=['A','B'])
             self._global_index = 0
 

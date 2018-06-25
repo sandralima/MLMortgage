@@ -763,7 +763,7 @@ def build_graph(architecture, FLAGS):
 ###############################
 def run_model(comp_graph, name, net_number, FLAGS, DATA):
     """Run the model represented by the input computation graph."""
-    config = tf.ConfigProto() # tf.ConfigProto(log_device_placement=True, allow_soft_placement=True) # is a configuring class for the graph.
+    config = tf.ConfigProto(log_device_placement=True, allow_soft_placement=True) # tf.ConfigProto()
     # Turns on XLA JIT compilation if the XLA flag is on.
     jit_level = tf.OptimizerOptions.ON_1 if FLAGS.xla else 0  # pylint: disable=no-member  # tf.OptimizerOptions.ON_1: IT compilation is turned on at the session level
     config.graph_options.optimizer_options.global_jit_level = jit_level  # pylint: disable=no-member
@@ -789,28 +789,37 @@ def run_model(comp_graph, name, net_number, FLAGS, DATA):
                 feed_test = create_feed_dict('test', DATA, FLAGS)
                 test_metrics = get_metrics(sess, feed_test)
                 bett_acc_test, m_mtx_mean_test, auc_aoc_mean_test, auc_pr_mean_test = print_stats(test_metrics, 'test')                
-                dtype = ['NN_name', 'NN_Number','Total Epochs', 'Execute Epochs', 'Total Training Time', 'Loss','LogLoss','Accuracy','Better-Accuracy','M-Measure Mean','AUC_AOC Mean','AUC_PR Mean']
+                test_file = Path(os.path.join(FLAGS.logdir, name + "_test_history.csv"))
+                if test_file.exists():
+                    dtype=None
+                else: 
+                    dtype = ['NN_name', 'NN_Number','Total Epochs', 'Execute Epochs', 'Total Training Time', 'Loss','LogLoss','Accuracy','Better-Accuracy','M-Measure Mean','AUC_AOC Mean','AUC_PR Mean']
                 pd.DataFrame(data=[(name, net_number, FLAGS.epoch_num, return_epoch, end_time,test_metrics[4], test_metrics[5], test_metrics[1], bett_acc_test, m_mtx_mean_test, auc_aoc_mean_test, auc_pr_mean_test)], 
-                             columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name + "_test_history.csv"), index=False, mode='a')
+                             columns=dtype, index=None).to_csv(test_file, index=False, mode='a')
                 
     return
 
+def acc_metrics_init(DATA):    
+    acc_conf_mtx=np.zeros((DATA.train.num_classes, DATA.train.num_classes))
+    acc_acc = 0
+    acc_auc_list = np.zeros((DATA.train.num_classes))
+    acc_m_mtx = np.zeros((DATA.train.num_classes, DATA.train.num_classes))
+    acc_loss = 0
+    acc_log_loss = 0
+    acc_auc_pr_list = np.zeros((DATA.train.num_classes))
+    epoch_metrics = (acc_conf_mtx, acc_acc, acc_auc_list, acc_m_mtx, acc_loss, acc_log_loss, acc_auc_pr_list)
+    
+    return epoch_metrics
+    
 
 def batch_training(sess, writers, name, net_number, FLAGS, DATA):
     """Iterate over the dataset based on the number of epochs and train."""
 
     def train_one_epoch(epoch, batch_size):
         print("Epoch: ", epoch)		
-        batch_num = math.ceil(np.float32(DATA.train.num_examples / batch_size))        
-        acc_conf_mtx=np.zeros((DATA.train.num_classes, DATA.train.num_classes))
-        acc_acc = 0
-        acc_auc_list = np.zeros((DATA.train.num_classes))
-        acc_m_mtx = np.zeros((DATA.train.num_classes, DATA.train.num_classes))
-        acc_loss = 0
-        acc_log_loss = 0
-        acc_auc_pr_list = np.zeros((DATA.train.num_classes))
         
-        epoch_metrics = (acc_conf_mtx, acc_acc, acc_auc_list, acc_m_mtx, acc_loss, acc_log_loss, acc_auc_pr_list)
+        batch_num = math.ceil(np.float32(DATA.train.num_examples / batch_size))        
+        epoch_metrics = acc_metrics_init(DATA)
         start_time = datetime.now()
         for batch_i in range(batch_num):
             batch_time = datetime.now()
@@ -830,59 +839,63 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
             print('Batch Time: ', datetime.now() - batch_time)            
         # The division should stay outside the inner for loop.
         epoch_metrics = (epoch_metrics[0], epoch_metrics[1]/batch_num, epoch_metrics[2]/batch_num, epoch_metrics[3]/batch_num, 
-                         epoch_metrics[4], epoch_metrics[5], epoch_metrics[6]/batch_num)
+                         epoch_metrics[4]/batch_num, epoch_metrics[5]/batch_num, epoch_metrics[6]/batch_num)
         
         print('Epoch Time: ', datetime.now() - start_time)
         
         return epoch_metrics 
 
-    # # Create a saver for writing training checkpoints.
-    saver = tf.train.Saver(var_list=None, max_to_keep=1)
-    # # Initialize all the variables in the graph.
-    sess.run('init')
-    print('Initialized all the local and global variables in the graph....')
-    
-    best_loss = -1
-    best_epoch = 0 
-    # best_weights = None
-    train_history =[]
-    valid_history=[]    
     return_epoch = 0
-#    dtype = [('epoch','int32'), ('Loss','float64'), ('LogLoss','float64'), ('Accuracy','float64'), 
-#             ('Better-Accuracy','float64'), ('M-Measure Mean','float64'), ('AUC_AOC Mean','float64'), ('AUC_PR Mean','float64')]    
-    checkpoint_file = os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number)) #'/model.ckpt' # os.path.join(FLAGS.logdir, 'model.ckpt')
-    for epoch in range(FLAGS.epoch_num):
-        epoch_metrics = train_one_epoch(epoch, FLAGS.batch_size)
-        bett_acc_train, m_mtx_mean_train, auc_aoc_mean_train, auc_pr_mean_train = print_stats(epoch_metrics, 'train')        
-        # Validation set:
-        feed_valid = create_feed_dict('valid', DATA, FLAGS)
-        valid_metrics = get_metrics(sess, feed_valid)                    
-        bett_acc_valid, m_mtx_mean_valid, auc_aoc_mean_valid, auc_pr_mean_valid = print_stats(valid_metrics, 'valid')
-        # model.set_weights(best_weights) ?? How to do that with tensorflow??
-        # Do __not__ delete the following 2 lines; they periodically save the model.                
-        saver.save(sess, checkpoint_file) # global_step=epoch
-        train_history += [(epoch, epoch_metrics[4], epoch_metrics[5], epoch_metrics[1], bett_acc_train, m_mtx_mean_train, auc_aoc_mean_train, auc_pr_mean_train)]
-        valid_history += [(epoch, valid_metrics[4], valid_metrics[5], valid_metrics[1], bett_acc_valid, m_mtx_mean_valid, auc_aoc_mean_valid, auc_pr_mean_valid)]
+    try:
+        # # Create a saver for writing training checkpoints.
+        saver = tf.train.Saver(var_list=None, max_to_keep=1)
+        # # Initialize all the variables in the graph.
+        sess.run('init')
+        print('Initialized all the local and global variables in the graph....')
         
-        # Early Stopping:
-        if valid_metrics[5] < best_loss or best_loss == -1:
-            best_loss = valid_metrics[5]
-            # only_weights = [layer for layer in tf.trainable_variables() if layer.op.name.find('weights')>0 ]            
-            # if weights: best_weights =  weights[0].eval()  
-            # model.set_weights(best_weights) ?? How to do that with tensorflow??
-            # Do __not__ delete the following 2 lines; they periodically save the model.                
-            # saver.save(sess, checkpoint_file) # global_step=epoch
-            best_epoch = epoch
-        else:
-            if epoch - best_epoch == 10:
-                print('Stopping: Not Improve in Validation Set after 10 epochs')
-                return_epoch = epoch
-                break        
-    
-    if return_epoch == 0: return_epoch = FLAGS.epoch_num
-    dtype = ['epoch','Loss','LogLoss','Accuracy','Better-Accuracy','M-Measure Mean','AUC_AOC Mean','AUC_PR Mean']
-    pd.DataFrame(data=train_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_train_history.csv"), index=False)
-    pd.DataFrame(data=valid_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_valid_history.csv"), index=False)
+        best_loss = -1
+        best_epoch = 0 
+        # best_weights = None
+        train_history =[]
+        valid_history=[]            
+        dtype = ['epoch','Loss','LogLoss','Accuracy','Better-Accuracy','M-Measure Mean','AUC_AOC Mean','AUC_PR Mean']
+        checkpoint_file = os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number)) #'/model.ckpt' # os.path.join(FLAGS.logdir, 'model.ckpt')
+        for epoch in range(FLAGS.epoch_num):
+            try:
+                epoch_metrics = train_one_epoch(epoch, FLAGS.batch_size)
+                bett_acc_train, m_mtx_mean_train, auc_aoc_mean_train, auc_pr_mean_train = print_stats(epoch_metrics, 'train')        
+                # Validation set:
+                feed_valid = create_feed_dict('valid', DATA, FLAGS)
+                valid_metrics = get_metrics(sess, feed_valid)                    
+                bett_acc_valid, m_mtx_mean_valid, auc_aoc_mean_valid, auc_pr_mean_valid = print_stats(valid_metrics, 'valid')
+                # model.set_weights(best_weights) ?? How to do that with tensorflow??
+                # Do __not__ delete the following 2 lines; they periodically save the model.                
+                saver.save(sess, checkpoint_file) # global_step=epoch
+                train_history += [(epoch, epoch_metrics[4], epoch_metrics[5], epoch_metrics[1], bett_acc_train, m_mtx_mean_train, auc_aoc_mean_train, auc_pr_mean_train)]
+                valid_history += [(epoch, valid_metrics[4], valid_metrics[5], valid_metrics[1], bett_acc_valid, m_mtx_mean_valid, auc_aoc_mean_valid, auc_pr_mean_valid)]
+                
+                # Early Stopping:
+                if valid_metrics[5] < best_loss or best_loss == -1:
+                    best_loss = valid_metrics[5]
+                    # only_weights = [layer for layer in tf.trainable_variables() if layer.op.name.find('weights')>0 ]            
+                    # if weights: best_weights =  weights[0].eval()  
+                    # model.set_weights(best_weights) ?? How to do that with tensorflow??
+                    # Do __not__ delete the following 2 lines; they periodically save the model.                
+                    # saver.save(sess, checkpoint_file) # global_step=epoch
+                    best_epoch = epoch
+                else:
+                    if epoch - best_epoch == 10:
+                        print('Stopping: Not Improve in Validation Set after 10 epochs')
+                        return_epoch = epoch
+                        break        
+            finally:
+                pd.DataFrame(data=train_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_train_history.csv"), index=False)
+                pd.DataFrame(data=valid_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_valid_history.csv"), index=False)                        
+    finally:
+        if return_epoch == 0: return_epoch = FLAGS.epoch_num    
+        pd.DataFrame(data=train_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_train_history.csv"), index=False)
+        pd.DataFrame(data=valid_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_valid_history.csv"), index=False)
+        
     return return_epoch
 
 
@@ -1161,7 +1174,7 @@ def FLAGS_setting(FLAGS, flag_num):
     FLAGS.stratified_flag = False
     FLAGS.batch_layer_type = 'layer'    
     FLAGS.weighted_sampling = False  # True  #
-    FLAGS.logdir = '/real_summaries'
+    FLAGS.logdir =  os.path.join(Path.home(), 'real_summaries')  # 
     FLAGS.n_hidden = 3
     FLAGS.s_hidden = [200, 140, 140]
     
@@ -1198,7 +1211,7 @@ def main(_):
        tf.gfile.DeleteRecursively(FLAGS.logdir)
     tf.gfile.MakeDirs(FLAGS.logdir)    
 
-    conf_number = 2    
+    conf_number = 1    
     subdir_name = 'chunks_all_c100th'
     for file_path in glob.glob(os.path.join(PRO_DIR, subdir_name,"*.h5")):  
         file_name = os.path.basename(file_path)
@@ -1242,7 +1255,7 @@ def update_parser(parser):
     parser.add_argument(
         '--logdir',
         type=str,
-        default='/real_summaries',
+        default=os.path.join(Path.home(), 'real_summaries'),
         help='Summaries log directory')
     parser.add_argument(
         '--n_hidden',

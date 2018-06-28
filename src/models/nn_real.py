@@ -56,7 +56,7 @@ PRO_DIR = os.path.join(Path(abspath(getsourcefile(lambda:0))).parents[2], 'data'
 # 6.   Look into queue-runner (from Stanford) to read the data in.
 
 
-def variable_summaries(name, var):
+def variable_summaries(name, var, allow_summaries):
     """Create summaries for the given Tensor (for TensorBoard visualization (TB graphs)).
         Calculate the mean, min, max, histogram and standardeviation for 'var' variable and save the information
         in tf.summary.
@@ -68,16 +68,16 @@ def variable_summaries(name, var):
         None
     Raises:        
     """
-    with tf.name_scope(name):
-        mean = tf.reduce_mean(var)
-        tf.summary.scalar('mean', mean)
-        with tf.name_scope('calculate_std'):
-            stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
-        tf.summary.scalar('stddev', stddev)
-        tf.summary.scalar('min', tf.reduce_min(var))
-        tf.summary.scalar('max', tf.reduce_max(var))
-        tf.summary.histogram('histogram', var)
-    return
+    if allow_summaries:
+        with tf.name_scope(name):
+            mean = tf.reduce_mean(var)
+            tf.summary.scalar('mean', mean)
+            with tf.name_scope('calculate_std'):
+                stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
+            tf.summary.scalar('stddev', stddev)
+            tf.summary.scalar('min', tf.reduce_min(var))
+            tf.summary.scalar('max', tf.reduce_max(var))
+            tf.summary.histogram('histogram', var)
 
 
 def _variable_on_cpu(name,
@@ -96,7 +96,7 @@ def _variable_on_cpu(name,
     Returns:
         Variable Tensor
     """
-    with tf.device('/cpu:0'): # this operation is assigned to this device, but this make a copy of data when is transferred on and off the device, which is expensive.
+    with tf.device('/gpu:1'): # this operation is assigned to this device, but this make a copy of data when is transferred on and off the device, which is expensive.
         var = tf.get_variable(
             name,
             shape,
@@ -107,7 +107,7 @@ def _variable_on_cpu(name,
 
 
 def _create_variable(name,
-                     shape,
+                     shape, allow_summaries, 
                      initializer=None,
                      regularizer=None,
                      dtype=DT_FLOAT):
@@ -123,11 +123,11 @@ def _create_variable(name,
         Variable Tensor
     """
     var = _variable_on_cpu(name, shape, initializer, regularizer, dtype)
-    variable_summaries(name + '/summaries', var)
+    variable_summaries(name + '/summaries', var, allow_summaries)
     return var
 
 
-def create_weights(name, shape, reg_rate):
+def create_weights(name, shape, reg_rate, allow_summaries):
     """Create a Variable initialized with weights which are truncated normal distribution and regularized by
     l1_regularizer (L1 regularization encourages sparsity, Regularization can help prevent overfitting).    
 
@@ -147,7 +147,7 @@ def create_weights(name, shape, reg_rate):
 
     regularizer = tf.contrib.layers.l1_regularizer(
         np.float32(reg_rate), 'penalty')
-    return _create_variable(name, shape, kernel_initializer, regularizer,
+    return _create_variable(name, shape, allow_summaries, kernel_initializer, regularizer,
                             dtype)
 
 
@@ -180,7 +180,7 @@ def bias_variable(name, shape, layer_name, weighted_sampling): # FLAGS.weighted_
     return bias
 
 
-def dropout_layer(name, tensor_before, dropout):
+def dropout_layer(name, tensor_before, FLAGS):
     """Compute dropout to tensor_before with name scoping and a placeholder for keep_prob. 
     With probability keep_prob, outputs the input element scaled up by 1 / keep_prob, otherwise outputs 0.
     
@@ -191,18 +191,18 @@ def dropout_layer(name, tensor_before, dropout):
         Variable Tensor of the same shape of tensor_before.
     """   
     
-    if not dropout:
+    if not FLAGS.dropout:
         print('There is not dropout for' + name)
         return tensor_before
     with tf.name_scope(name) as scope:
         keep_prob = tf.placeholder(DT_FLOAT, None, name='keep_proba')
         tf.summary.scalar('keep_probability', keep_prob)
         dropped = tf.nn.dropout(tensor_before, keep_prob=keep_prob, name=scope)
-        variable_summaries('input_dropped_out', dropped)
+        variable_summaries('input_dropped_out', dropped, FLAGS.allow_summaries)
     return dropped
 
 
-def batch_normalization(name, input_tensor, train_flag):
+def batch_normalization(name, input_tensor, train_flag, FLAGS):
     """Perform batch normalization over the input tensor.
     Batch normalization helps avoid overfitting and we're able to use more
     aggressive (larger) learning rates, resulting in faster convergence.
@@ -227,11 +227,11 @@ def batch_normalization(name, input_tensor, train_flag):
             scale=True,
             training=train_flag,
             name=name)  # renorm=True, renorm_momentum=0.99)
-        variable_summaries('normalized_batch', normalized)
+        variable_summaries('normalized_batch', normalized, FLAGS.allow_summaries)
     return normalized
 
 
-def layer_normalization(name, input_tensor):
+def layer_normalization(name, input_tensor, FLAGS):
     """Perform layer normalization.
 
     Layer normalization helps avoid overfitting and we're able to use more
@@ -247,22 +247,22 @@ def layer_normalization(name, input_tensor):
     with tf.name_scope(name):
         normalized = tf.contrib.layers.layer_norm(
             input_tensor, center=True, scale=True, scope=name)
-        variable_summaries('normalized_layer', normalized)
+        variable_summaries('normalized_layer', normalized, FLAGS.allow_summaries)
     return normalized
 
 
-def normalize(name, input_tensor, batch_type, train_flag, batch_norm):
+def normalize(name, input_tensor, train_flag, FLAGS):
     """Perform either type (batch/layer) of normalization."""
-    if not batch_norm:
+    if not FLAGS.batch_norm:
         return input_tensor
-    if batch_type.lower() == 'batch':
-        return batch_normalization(name, input_tensor, train_flag)
-    if batch_type.lower() == 'layer':
-        return layer_normalization(name, input_tensor)
-    raise ValueError('Invalid value for batch_type: ' + batch_type)
+    if FLAGS.batch_type.lower() == 'batch':
+        return batch_normalization(name, input_tensor, train_flag, FLAGS)
+    if FLAGS.batch_type.lower() == 'layer':
+        return layer_normalization(name, input_tensor, FLAGS)
+    raise ValueError('Invalid value for batch_type: ' + FLAGS.batch_type)
 
 
-def nn_layer(input_tensor, output_dim, layer_name, batch_type, act, reg_rate, train_flag, dropout, batch_norm):
+def nn_layer(input_tensor, output_dim, layer_name, FLAGS, act, train_flag):
     """Create a simple neural net layer.
 
     It performs the affine transformation and uses the activation function to
@@ -271,12 +271,12 @@ def nn_layer(input_tensor, output_dim, layer_name, batch_type, act, reg_rate, tr
     """
     input_dim = input_tensor.shape[1].value    
     with tf.variable_scope(layer_name): # A context manager for defining ops that creates variables (layers).
-        weights = create_weights('weights', [input_dim, output_dim], reg_rate)
+        weights = create_weights('weights', [input_dim, output_dim], FLAGS.reg_rate, FLAGS.allow_summaries)
         # This is outdated and no longer applies: Do not change the order of
         # batch normalization and drop out. batch # normalization has to stay
         # __before__ the drop out layer.
-        variable_summaries('input', input_tensor)
-        input_tensor = dropout_layer('dropout', input_tensor, dropout)
+        variable_summaries('input', input_tensor, FLAGS.allow_summaries)
+        input_tensor = dropout_layer('dropout', input_tensor, FLAGS)
         with tf.name_scope('mix'):
             mixed = tf.matmul(input_tensor, weights)
             tf.summary.histogram('maybe_guassian', mixed)
@@ -287,8 +287,7 @@ def nn_layer(input_tensor, output_dim, layer_name, batch_type, act, reg_rate, tr
         # ```We add the BN transform immediately before the nonlinearity, by
         # normalizing x = W u + b```
         # biases = bias_variable('biases', [output_dim], layer_name)
-        preactivate = normalize('layer_normalization', mixed,
-                                batch_type, train_flag, batch_norm)  # + biases
+        preactivate = normalize('layer_normalization', mixed, train_flag, FLAGS)  # + biases
         # tf.summary.histogram('pre_activations', preactivate)
         # preactivate = dropout_layer('dropout', preactivate)
         with tf.name_scope('activation') as scope:
@@ -660,15 +659,15 @@ def calculate_metrics(labels, logits):
     return accuracy, conf_mtx, auc, m_list, loss, pr_auc, pr_data 
 
 
-def add_hidden_layers(features, architecture, n_hidden, batch_type, reg_rate, train_flag, dropout, batch_norm, act=tf.nn.relu):
+def add_hidden_layers(features, architecture, FLAGS, train_flag, act=tf.nn.relu):
     """Add hidden layers to the model using the architecture parameters."""
     hidden_out = features
     jit_scope = tf.contrib.compiler.jit.experimental_jit_scope #JIT compiler compiles and runs parts of TF graphs via XLA, fusing multiple operators (kernel fusion) nto a small number of compiled kernels.
     with jit_scope(): #this operation will be compiled with XLA.
-        for hid_i in range(1, n_hidden + 1):
+        for hid_i in range(1, FLAGS.n_hidden + 1):
             hidden_out = nn_layer(hidden_out,
                                   architecture['n_hidden_{:1d}'.format(hid_i)],
-                                  '{:1d}_hidden'.format(hid_i), batch_type, act, reg_rate, train_flag, dropout, batch_norm)
+                                  '{:1d}_hidden'.format(hid_i), FLAGS, act, train_flag)
     return hidden_out
 
 
@@ -685,13 +684,11 @@ def inference(features, architecture, FLAGS):
         #     scale=True,  # False,
         #     training=train_flag,
         #     name='input_normalization/norm')
-        variable_summaries('input_normalized', feature_norm)
+        variable_summaries('input_normalized', feature_norm, FLAGS.allow_summaries)
 
-    hidden_out = add_hidden_layers(feature_norm, architecture, FLAGS.n_hidden, FLAGS.batch_layer_type,
-                                   FLAGS.reg_rate, train_flag, FLAGS.dropout, FLAGS.batch_norm)
+    hidden_out = add_hidden_layers(feature_norm, architecture, FLAGS, train_flag)
     # Linear output layer for the logits
-    logits = (nn_layer(hidden_out, architecture['n_classes'],
-                       '9_softmax_linear', FLAGS.batch_layer_type, tf.identity, FLAGS.reg_rate, train_flag, FLAGS.dropout, FLAGS.batch_norm))    
+    logits = (nn_layer(hidden_out, architecture['n_classes'],'9_softmax_linear', FLAGS, tf.identity, train_flag))    
     return logits
 
 
@@ -767,7 +764,8 @@ def run_model(comp_graph, name, net_number, FLAGS, DATA):
     # Turns on XLA JIT compilation if the XLA flag is on.
     jit_level = tf.OptimizerOptions.ON_1 if FLAGS.xla else 0  # pylint: disable=no-member  # tf.OptimizerOptions.ON_1: IT compilation is turned on at the session level
     config.graph_options.optimizer_options.global_jit_level = jit_level  # pylint: disable=no-member
-    # config.gpu_options.allow_growth = True
+    config.gpu_options.allow_growth = True
+    return_epoch = 0
     with tf.Session(graph=comp_graph, config=config) as sess:
         writers = {
             'batch': tf.summary.FileWriter(os.path.join(FLAGS.logdir, 'batch'),
@@ -780,14 +778,14 @@ def run_model(comp_graph, name, net_number, FLAGS, DATA):
             return_epoch = batch_training(sess, writers, name, net_number, FLAGS, DATA)
             end_time = datetime.now() - start_time
             print('Total Training Time for: ' + FLAGS.name, end_time)
+        except Exception as inst:            
+            print(inst)
         finally:
             for mode in writers:
                 writers[mode].close()
             if FLAGS.test_flag:
-                end_time = datetime.now() - start_time
-                return_epoch = 0
-                feed_test = create_feed_dict('test', DATA, FLAGS)
-                test_metrics = get_metrics(sess, feed_test)
+                end_time = datetime.now() - start_time                                
+                test_metrics = batching_dataset(sess, writers, 'test', DATA, FLAGS)
                 bett_acc_test, m_mtx_mean_test, auc_aoc_mean_test, auc_pr_mean_test = print_stats(test_metrics, 'test')                
                 test_file = Path(os.path.join(FLAGS.logdir, name + "_test_history.csv"))
                 if test_file.exists():
@@ -795,9 +793,8 @@ def run_model(comp_graph, name, net_number, FLAGS, DATA):
                 else: 
                     dtype = ['NN_name', 'NN_Number','Total Epochs', 'Execute Epochs', 'Total Training Time', 'Loss','LogLoss','Accuracy','Better-Accuracy','M-Measure Mean','AUC_AOC Mean','AUC_PR Mean']
                 pd.DataFrame(data=[(name, net_number, FLAGS.epoch_num, return_epoch, end_time,test_metrics[4], test_metrics[5], test_metrics[1], bett_acc_test, m_mtx_mean_test, auc_aoc_mean_test, auc_pr_mean_test)], 
-                             columns=dtype, index=None).to_csv(test_file, index=False, mode='a')
-                
-    return
+                             columns=dtype, index=None).to_csv(test_file, index=False, mode='a')                
+
 
 def acc_metrics_init(DATA):    
     acc_conf_mtx=np.zeros((DATA.train.num_classes, DATA.train.num_classes))
@@ -810,7 +807,26 @@ def acc_metrics_init(DATA):
     epoch_metrics = (acc_conf_mtx, acc_acc, acc_auc_list, acc_m_mtx, acc_loss, acc_log_loss, acc_auc_pr_list)
     
     return epoch_metrics
+
+def batching_dataset(sess, writers, tag, DATA, FLAGS):
+    if tag =='valid':
+        batch_num = math.ceil(np.float32(DATA.validation.num_examples / FLAGS.batch_size))
+    else: #test
+        batch_num = math.ceil(np.float32(DATA.test.num_examples / FLAGS.batch_size))
+    metrics = acc_metrics_init(DATA)
+    start_time = datetime.now()
+    for batch_i in range(batch_num):
+        feed = create_feed_dict('valid', DATA, FLAGS)     
+        batch_metrics_valid = get_metrics(sess, feed)        
+        metrics = batch_stats(metrics, batch_metrics_valid) 
+        write_summaries(sess, writers, 'valid', batch_i, feed)
     
+    metrics = (metrics[0], metrics[1]/batch_num, metrics[2]/batch_num, metrics[3]/batch_num, 
+               metrics[4]/batch_num, metrics[5]/batch_num, metrics[6]/batch_num)
+        
+    print( tag + ' Time: ', datetime.now() - start_time)
+    return metrics
+            
 
 def batch_training(sess, writers, name, net_number, FLAGS, DATA):
     """Iterate over the dataset based on the number of epochs and train."""
@@ -819,30 +835,27 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
         print("Epoch: ", epoch)		
         
         batch_num = math.ceil(np.float32(DATA.train.num_examples / batch_size))        
-        epoch_metrics = acc_metrics_init(DATA)
+        epoch_metrics_train = acc_metrics_init(DATA)        
         start_time = datetime.now()
         for batch_i in range(batch_num):
             batch_time = datetime.now()
             print("batch Number: ", batch_i)
             batch_dict= create_feed_dict('batch', DATA, FLAGS)
-            step = epoch * batch_num + batch_i            
+            step = epoch * batch_num + batch_i    # total steps for all epochs        
             if step > 0 and (step * batch_size) % (DATA.train.num_examples) < batch_size:                
                 # print ('(step * batch_size) % (DATA.train.num_examples): ', (step * batch_size) % (DATA.train.num_examples))
                 train_and_summarize(sess, writers, step, batch_dict)                
             else:                
                 _ = sess.run(['train'], feed_dict=batch_dict)                
                 
-            batch_metrics = get_metrics(sess, batch_dict)        
-            epoch_metrics = batch_stats(epoch_metrics, batch_metrics) 
-            feed_valid = create_feed_dict('valid', DATA, FLAGS)            
-            write_summaries(sess, writers, 'valid', step, feed_valid)
+            batch_metrics_train = get_metrics(sess, batch_dict)        
+            epoch_metrics_train = batch_stats(epoch_metrics_train, batch_metrics_train)             
             print('Batch Time: ', datetime.now() - batch_time)            
         # The division should stay outside the inner for loop.
-        epoch_metrics = (epoch_metrics[0], epoch_metrics[1]/batch_num, epoch_metrics[2]/batch_num, epoch_metrics[3]/batch_num, 
-                         epoch_metrics[4]/batch_num, epoch_metrics[5]/batch_num, epoch_metrics[6]/batch_num)
+        epoch_metrics = (epoch_metrics_train[0], epoch_metrics_train[1]/batch_num, epoch_metrics_train[2]/batch_num, epoch_metrics_train[3]/batch_num, 
+                         epoch_metrics_train[4]/batch_num, epoch_metrics_train[5]/batch_num, epoch_metrics_train[6]/batch_num)
         
-        print('Epoch Time: ', datetime.now() - start_time)
-        
+        print('Epoch Time: ', datetime.now() - start_time)        
         return epoch_metrics 
 
     return_epoch = 0
@@ -861,36 +874,35 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
         dtype = ['epoch','Loss','LogLoss','Accuracy','Better-Accuracy','M-Measure Mean','AUC_AOC Mean','AUC_PR Mean']
         checkpoint_file = os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number)) #'/model.ckpt' # os.path.join(FLAGS.logdir, 'model.ckpt')
         for epoch in range(FLAGS.epoch_num):
-            try:
-                epoch_metrics = train_one_epoch(epoch, FLAGS.batch_size)
-                bett_acc_train, m_mtx_mean_train, auc_aoc_mean_train, auc_pr_mean_train = print_stats(epoch_metrics, 'train')        
-                # Validation set:
-                feed_valid = create_feed_dict('valid', DATA, FLAGS)
-                valid_metrics = get_metrics(sess, feed_valid)                    
-                bett_acc_valid, m_mtx_mean_valid, auc_aoc_mean_valid, auc_pr_mean_valid = print_stats(valid_metrics, 'valid')
+#            try:
+            epoch_metrics = train_one_epoch(epoch, FLAGS.batch_size)
+            bett_acc_train, m_mtx_mean_train, auc_aoc_mean_train, auc_pr_mean_train = print_stats(epoch_metrics, 'train')        
+            # Validation set:                                
+            valid_metrics = batching_dataset(sess, writers, 'valid', DATA, FLAGS)
+            bett_acc_valid, m_mtx_mean_valid, auc_aoc_mean_valid, auc_pr_mean_valid = print_stats(valid_metrics, 'valid')
+            # model.set_weights(best_weights) ?? How to do that with tensorflow??
+            # Do __not__ delete the following 2 lines; they periodically save the model.                
+            saver.save(sess, checkpoint_file) # global_step=epoch
+            train_history += [(epoch, epoch_metrics[4], epoch_metrics[5], epoch_metrics[1], bett_acc_train, m_mtx_mean_train, auc_aoc_mean_train, auc_pr_mean_train)]
+            valid_history += [(epoch, valid_metrics[4], valid_metrics[5], valid_metrics[1], bett_acc_valid, m_mtx_mean_valid, auc_aoc_mean_valid, auc_pr_mean_valid)]
+            
+            # Early Stopping:
+            if valid_metrics[5] < best_loss or best_loss == -1:
+                best_loss = valid_metrics[5]
+                # only_weights = [layer for layer in tf.trainable_variables() if layer.op.name.find('weights')>0 ]            
+                # if weights: best_weights =  weights[0].eval()  
                 # model.set_weights(best_weights) ?? How to do that with tensorflow??
                 # Do __not__ delete the following 2 lines; they periodically save the model.                
-                saver.save(sess, checkpoint_file) # global_step=epoch
-                train_history += [(epoch, epoch_metrics[4], epoch_metrics[5], epoch_metrics[1], bett_acc_train, m_mtx_mean_train, auc_aoc_mean_train, auc_pr_mean_train)]
-                valid_history += [(epoch, valid_metrics[4], valid_metrics[5], valid_metrics[1], bett_acc_valid, m_mtx_mean_valid, auc_aoc_mean_valid, auc_pr_mean_valid)]
-                
-                # Early Stopping:
-                if valid_metrics[5] < best_loss or best_loss == -1:
-                    best_loss = valid_metrics[5]
-                    # only_weights = [layer for layer in tf.trainable_variables() if layer.op.name.find('weights')>0 ]            
-                    # if weights: best_weights =  weights[0].eval()  
-                    # model.set_weights(best_weights) ?? How to do that with tensorflow??
-                    # Do __not__ delete the following 2 lines; they periodically save the model.                
-                    # saver.save(sess, checkpoint_file) # global_step=epoch
-                    best_epoch = epoch
-                else:
-                    if epoch - best_epoch == 10:
-                        print('Stopping: Not Improve in Validation Set after 10 epochs')
-                        return_epoch = epoch
-                        break        
-            finally:
-                pd.DataFrame(data=train_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_train_history.csv"), index=False)
-                pd.DataFrame(data=valid_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_valid_history.csv"), index=False)                        
+                # saver.save(sess, checkpoint_file) # global_step=epoch
+                best_epoch = epoch
+            else:
+                if epoch - best_epoch == 10:
+                    print('Stopping: Not Improve in Validation Set after 10 epochs')
+                    return_epoch = epoch
+                    break        
+#            finally:
+#                pd.DataFrame(data=train_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_train_history.csv"), index=False)
+#                pd.DataFrame(data=valid_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_valid_history.csv"), index=False)                        
     finally:
         if return_epoch == 0: return_epoch = FLAGS.epoch_num    
         pd.DataFrame(data=train_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_train_history.csv"), index=False)
@@ -923,52 +935,52 @@ def print_stats(stats, name):
     # global_acc = 0.
     m_mtx_mean = 0.
     
-    if (name!='train'):
-        m_mtx = reshape_m_mtx(m_mtx_list)
-        m_mtx_mean = np.float32(m_mtx.sum()) / (49 - 7)
-        print('Avg Cost in ' + name +': {:.5f}'.format(loss))        
-        print('Avg Log_Cost in ' + name +': {:.5f}'.format(log_loss))
-        print(
-            '{:s}:'.format(name),
-            '(Silly) Global-ACC={:.4f}, Better ACC={:.4f},'.format(
-                acc, bett_acc),
-            'Avg M-Measure={:.4f},'.format(m_mtx_mean),
-            'Avg AUC_AOC={:.4f}'.format(auc_aoc_mean), 'Avg AUC_PR={:.4f}'.format(auc_pr_mean))
-        print(('\t' * 6).join(['Total Confusion Matrix', 'Total M-Measure Matrix', 'Total AUC_AOC', 'Total AUC_PR']))
-        for conf_row, row, auc, auc_pr in zip(conf_mtx, m_mtx, auc_list, auc_pr_list):
-            for conf_value in conf_row:
-                print('{:.4f}'.format(conf_value), '\t', end='')
-            print('|\t', end='')
-            for value in row:
-                print('{:.4f}'.format(value), '\t', end='')
-            print('| \t{:.4f}'.format(auc), '| \t{:.4f}'.format(auc_pr), '\n')        
-        print('--------------------------------------------------------------'
-              '------------')
-    else:    
-        print('Total Cost in ' + name +': {:.5f}'.format(loss))        
-        print('Total Log_Cost in ' + name +': {:.5f}'.format(log_loss))        
-#        sum_mtx = np.sum(conf_mtx, axis=1)
-#        for y in range(7):
-#            global_acc += conf_mtx[y,y] / (sum_mtx[y])
-#            
-#        global_acc /= conf_mtx.shape[0]
-        m_mtx = m_mtx_list
-        m_mtx_mean = np.float32(m_mtx.sum()) / (49 - 7)
-        print(
-            '{:s}:'.format(name),
-            '(Silly) Batch-Avg_ACC={:.4f}, Better ACC={:.4f},'.format(acc, bett_acc),
-            'Batch-Avg_M_Measure={:.4f},'.format(m_mtx_mean),
-            'Batch-Avg_AUC_AOC={:.4f}'.format(auc_aoc_mean), 'Batch-Avg_AUC_PR={:.4f}'.format(auc_pr_mean))
-        print(('\t' * 6).join(['Total Confusion Matrix', 'Batch-M_Measure Matrix', 'Batch-AUC_AOC', 'Batch-AUC_PR']))
-        for conf_row, row, auc, auc_pr in zip(conf_mtx, m_mtx, auc_list, auc_pr_list):
-            for conf_value in conf_row:
-                print('{:.4f}'.format(conf_value), '\t', end='')
-            print('|\t', end='')
-            for value in row:
-                print('{:.4f}'.format(value), '\t', end='')
-            print('| \t{:.4f}'.format(auc), '| \t{:.4f}'.format(auc_pr), '\n')        
-        print('--------------------------------------------------------------'
-              '------------')        
+#    if (name!='train'):
+    m_mtx = m_mtx_list # reshape_m_mtx(m_mtx_list)
+    m_mtx_mean = np.float32(m_mtx.sum()) / (49 - 7)
+    print('Avg Cost in ' + name +': {:.5f}'.format(loss))        
+    print('Avg Log_Cost in ' + name +': {:.5f}'.format(log_loss))
+    print(
+        '{:s}:'.format(name),
+        '(Silly) Global-ACC={:.4f}, Better ACC={:.4f},'.format(
+            acc, bett_acc),
+        'Avg M-Measure={:.4f},'.format(m_mtx_mean),
+        'Avg AUC_AOC={:.4f}'.format(auc_aoc_mean), 'Avg AUC_PR={:.4f}'.format(auc_pr_mean))
+    print(('\t' * 6).join(['Total Confusion Matrix', 'Total M-Measure Matrix', 'Total AUC_AOC', 'Total AUC_PR']))
+    for conf_row, row, auc, auc_pr in zip(conf_mtx, m_mtx, auc_list, auc_pr_list):
+        for conf_value in conf_row:
+            print('{:.4f}'.format(conf_value), '\t', end='')
+        print('|\t', end='')
+        for value in row:
+            print('{:.4f}'.format(value), '\t', end='')
+        print('| \t{:.4f}'.format(auc), '| \t{:.4f}'.format(auc_pr), '\n')        
+    print('--------------------------------------------------------------'
+          '------------')
+#    else:    
+#        print('Avg Cost in ' + name +': {:.5f}'.format(loss))        
+#        print('Avg Log_Cost in ' + name +': {:.5f}'.format(log_loss))        
+##        sum_mtx = np.sum(conf_mtx, axis=1)
+##        for y in range(7):
+##            global_acc += conf_mtx[y,y] / (sum_mtx[y])
+##            
+##        global_acc /= conf_mtx.shape[0]
+#        m_mtx = m_mtx_list
+#        m_mtx_mean = np.float32(m_mtx.sum()) / (49 - 7)
+#        print(
+#            '{:s}:'.format(name),
+#            '(Silly) Batch-Avg_ACC={:.4f}, Better ACC={:.4f},'.format(acc, bett_acc),
+#            'Batch-Avg_M_Measure={:.4f},'.format(m_mtx_mean),
+#            'Batch-Avg_AUC_AOC={:.4f}'.format(auc_aoc_mean), 'Batch-Avg_AUC_PR={:.4f}'.format(auc_pr_mean))
+#        print(('\t' * 6).join(['Total Confusion Matrix', 'Batch-M_Measure Matrix', 'Batch-AUC_AOC', 'Batch-AUC_PR']))
+#        for conf_row, row, auc, auc_pr in zip(conf_mtx, m_mtx, auc_list, auc_pr_list):
+#            for conf_value in conf_row:
+#                print('{:.4f}'.format(conf_value), '\t', end='')
+#            print('|\t', end='')
+#            for value in row:
+#                print('{:.4f}'.format(value), '\t', end='')
+#            print('| \t{:.4f}'.format(auc), '| \t{:.4f}'.format(auc_pr), '\n')        
+#        print('--------------------------------------------------------------'
+#              '------------')        
     
     return bett_acc, m_mtx_mean, auc_aoc_mean, auc_pr_mean
     
@@ -1084,13 +1096,9 @@ def create_feed_dict(tag, DATA, FLAGS):
         targets = DATA.train.orig.labels
         example_weights = np.ones_like(targets.iloc[:, 1].values)
     elif tag == 'valid':
-        features = DATA.validation.features
-        targets = DATA.validation.labels
-        example_weights = np.ones_like(targets.iloc[:, 1].values)
+        features, targets, example_weights = DATA.validation.next_ooc_batch(FLAGS.batch_size)
     else:
-        features = DATA.test.features
-        targets = DATA.test.labels
-        example_weights = np.ones_like(targets.iloc[:, 1].values)
+        features, targets, example_weights = DATA.test.next_ooc_batch(FLAGS.batch_size)
 
     # features[:, :7] = targets
     if tag == 'batch':
@@ -1157,7 +1165,7 @@ def FLAGS_setting(FLAGS, flag_num):
 
     # ### parameters for inverse_time_decay
     FLAGS.decay_rate = 1
-    FLAGS.decay_step = 1 * 80000
+    FLAGS.decay_step = 1 * 80000 #according to paper: 800 epochs
     FLAGS.rate_min = .0015
     # ### parameters for exponential_decay
     # FLAGS.decay_base = .96  # .96
@@ -1172,11 +1180,12 @@ def FLAGS_setting(FLAGS, flag_num):
     FLAGS.test_flag = True
     FLAGS.xla = True  # False
     FLAGS.stratified_flag = False
-    FLAGS.batch_layer_type = 'layer'    
+    FLAGS.batch_type = 'layer'    
     FLAGS.weighted_sampling = False  # True  #
     FLAGS.logdir =  os.path.join(Path.home(), 'real_summaries')  # 
     FLAGS.n_hidden = 3
     FLAGS.s_hidden = [200, 140, 140]
+    FLAGS.allow_summaries = False
     
     if FLAGS.n_hidden < 0 : raise ValueError('The size of hidden layer must be at least 0')
     if (FLAGS.n_hidden > 0) and (FLAGS.n_hidden != len(FLAGS.s_hidden)) : raise ValueError('Sizes in hidden layers should match!')
@@ -1192,7 +1201,7 @@ def FLAGS_setting(FLAGS, flag_num):
 def architecture_settings(DATA, FLAGS):
     # Architecture	
     architecture = {
-        'n_input': DATA.validation.features.shape[1],
+        'n_input': DATA.train.num_columns,
         'n_classes': DATA.validation.num_classes
     }
     for hid_i in range(1, FLAGS.n_hidden+1):
@@ -1274,7 +1283,7 @@ def update_parser(parser):
         default=False,
         help='Execute Stratified Sampling of the DataSet by Delinquency Status')
     parser.add_argument(
-        '--batch_layer_type',
+        '--batch_type',
         type=str,
         default='layer',
         help='Select the layer type for batch normalization')
@@ -1283,6 +1292,11 @@ def update_parser(parser):
         type=str,
         default='',
         help='Hyperparameters configuration')
+    parser.add_argument(
+        '--allow_summaries',
+        type=bool,
+        default=True,
+        help='Summaries by variable')
     return parser.parse_known_args()
 
 # %%

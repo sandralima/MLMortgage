@@ -563,6 +563,7 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
     with  pd.HDFStore(target_path +'-pp.h5', complib='blosc', complevel=9) as hdf:
         gflag = ''    
         i = 1            
+        num_columns = 0
         for chunk in pd.read_csv(file_path, chunksize = chunksize, sep=',', low_memory=False):    
             print('chunk: ', i)
             chunk.columns = chunk.columns.str.upper()                
@@ -617,12 +618,14 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
             hdf.put('valid/labels', labels.iloc[tr_num:tr_num + v_num, ], append=True)                        
             
             hdf.put('test/features', chunk.iloc[tr_num + v_num:, ], append=True)
-            hdf.put('test/labels', labels.iloc[tr_num + v_num:, ], append=True)                        
-            
-            logger.info('training, validation and testing set into .h5 file')    
+            hdf.put('test/labels', labels.iloc[tr_num + v_num:, ], append=True) 
+            num_columns = len(chunk.columns.values)
             del chunk
             del labels
             i +=  1   
+        hdf.get_storer('train/features').attrs.num_columns = num_columns
+            
+        logger.info('training, validation and testing set into .h5 file')    
 
                         
 def get_h5_dataset(raw_dir, file_name):

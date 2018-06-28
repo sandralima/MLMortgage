@@ -6,7 +6,7 @@ import pandas as pd
 class DataBatch(object):
     """ABC."""
 
-    def __init__(self, in_tuple=None, h5_dataset=None):
+    def __init__(self, in_tuple=None, h5_dataset=None, dtype='train'):
         if (in_tuple!=None):
             self.orig = Data(in_tuple)
             self.features, self.labels = in_tuple
@@ -14,11 +14,13 @@ class DataBatch(object):
             self.weights = self.orig.labels @ get_weights(self.orig.labels) # 30/01/2018: this weights are not used in the tensor model!
             self._global_index = 0            
         elif (h5_dataset!=None):
-            if h5_dataset.get_storer('train/features').nrows != h5_dataset.get_storer('train/labels').nrows:
+            if h5_dataset.get_storer(dtype + '/features').nrows != h5_dataset.get_storer(dtype + '/labels').nrows:
                 raise ValueError('DataBatch: Sizes should match!')  
             self.features, self.labels = None, None
             self.h5_path = h5_dataset._path
-            self._num_examples, self._num_classes = h5_dataset.get_storer('train/labels').nrows, h5_dataset.get_storer('train/labels').ncols            
+            self.dtype = dtype
+            self._num_examples, self._num_classes = h5_dataset.get_storer(dtype + '/labels').nrows, h5_dataset.get_storer(dtype + '/labels').ncols            
+            self._num_columns = h5_dataset.get_storer('train/features').attrs.num_columns
             self._global_index = 0            
 
         
@@ -58,7 +60,7 @@ class DataBatch(object):
             [1.0], dtype=np.dtype('float32'))  # temp_weights
 
 
-    def next_ooc_batch(self, batch_size, batch_type='train'):
+    def next_ooc_batch(self, batch_size):
         """Get the next batch of the data with the given batch size."""
         if not isinstance(batch_size, int):
             raise TypeError('DataBatch: batch_size has to be of int type.')
@@ -68,14 +70,14 @@ class DataBatch(object):
         if self._global_index + batch_size <= self._num_examples:            
 #            temp_features = self.features.iloc[self._global_index:self._global_index + batch_size, :]            
 #            temp_labels = self.labels.iloc[self._global_index:self._global_index + batch_size]
-            temp_features = pd.read_hdf(self.h5_path, batch_type + '/features', start=self._global_index, stop=self._global_index + batch_size)
-            temp_labels = pd.read_hdf(self.h5_path, batch_type + '/labels', start=self._global_index, stop=self._global_index + batch_size)            
+            temp_features = pd.read_hdf(self.h5_path, self.dtype + '/features', start=self._global_index, stop=self._global_index + batch_size)
+            temp_labels = pd.read_hdf(self.h5_path, self.dtype + '/labels', start=self._global_index, stop=self._global_index + batch_size)            
             self._global_index += batch_size            
         else:            
 #            temp_features = self.features.iloc[self._global_index:, :]
 #            temp_labels = self.labels.iloc[self._global_index:, :]                        
-            temp_features = pd.read_hdf(self.h5_path, batch_type + '/features', start=self._global_index)            
-            temp_labels = pd.read_hdf(self.h5_path, batch_type + '/labels', start=self._global_index)            
+            temp_features = pd.read_hdf(self.h5_path, self.dtype + '/features', start=self._global_index)            
+            temp_labels = pd.read_hdf(self.h5_path, self.dtype + '/labels', start=self._global_index)            
             # hdf = pd.read_hdf('storage.h5', 'd1', where=['A>.5'], columns=['A','B'])
             self._global_index = 0
 
@@ -120,6 +122,10 @@ class DataBatch(object):
         """Get the number of examples in the dataset."""
         return self._num_classes
 
+    @property
+    def num_columns(self):
+        """Get the number of examples in the dataset."""
+        return self._num_columns
 
 class Data(object):
     """ABC."""
@@ -152,9 +158,9 @@ class Dataset(object):
             self.test = Data(test_tuple)
             self.feature_columns = feature_columns
         elif (h5_dataset!=None):            
-            self.train = DataBatch(h5_dataset=h5_dataset)            
-            self.validation = Data((h5_dataset.get('valid/features'), h5_dataset.get('valid/labels')))
-            self.test = Data((h5_dataset.get('test/features'), h5_dataset.get('test/labels'))) #if it gives some trouble, it will be loaded at the end.
+            self.train = DataBatch(h5_dataset=h5_dataset, dtype='train')            
+            self.validation = DataBatch(h5_dataset=h5_dataset, dtype='valid') # Data((h5_dataset.get('valid/features'), h5_dataset.get('valid/labels')))
+            self.test = DataBatch(h5_dataset=h5_dataset, dtype='test') # Data((h5_dataset.get('test/features'), h5_dataset.get('test/labels'))) #if it gives some trouble, it will be loaded at the end.
 
 
 def get_weights(labels):

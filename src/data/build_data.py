@@ -381,7 +381,7 @@ def get_datasets(data, train_num, valid_num, test_num, weight_flag=False, strati
 def drop_invalid_delinquency_status(data, gflag):   
     
     logger.name = 'drop_invalid_delinquency_status'
-    delinq_ids =  data[data['MBA_DELINQUENCY_STATUS'].isin(['S', 'T', 'X', 'Z'])]['LOAN_ID']
+    delinq_ids =  data[data['MBA_DELINQUENCY_STATUS'].isin(['0', 'R', 'S', 'T', 'X', 'Z'])]['LOAN_ID']
     groups = data[data['LOAN_ID'].isin(delinq_ids)][['LOAN_ID', 'PERIOD', 'MBA_DELINQUENCY_STATUS', 'DELINQUENCY_STATUS_NEXT']].groupby('LOAN_ID') 
     groups_list = list(groups)
     
@@ -401,7 +401,10 @@ def drop_invalid_delinquency_status(data, gflag):
     for k, group in groups_list: 
         li= group.index[(group['MBA_DELINQUENCY_STATUS'] =='S') | (group['MBA_DELINQUENCY_STATUS'] =='T') 
                          | (group['MBA_DELINQUENCY_STATUS'] =='X') | (group['MBA_DELINQUENCY_STATUS'] =='Z')].tolist()
-        iuw= iuw.union(group.index[group.index.get_loc(li[0]):])        
+        if li: iuw= iuw.union(group.index[group.index.get_loc(li[0]):])
+        # In case of REO or Paid-Off, we need to exclude since the next record:
+        track_i = group[(group['MBA_DELINQUENCY_STATUS'] =='0') | (group['MBA_DELINQUENCY_STATUS'] =='R')].index[0]
+        if track_i: iuw= iuw.union(group.index[group.index.get_loc(track_i)+1:])
         
     if iuw!=[]:                        
         data.drop(iuw, inplace=True) 
@@ -465,7 +468,7 @@ def imputing_nan_values(nan_dict, distribution):
 def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num, test_num, dividing='percentage', chunksize=500000, 
                             refNorm=True, label='DELINQUENCY_STATUS_NEXT'):
     descriptive_cols = [
-        'LOAN_ID',
+#        'LOAN_ID',
         'ASOFMONTH',        
         'PERIOD_NEXT',
         'MOD_PER_FROM',
@@ -504,7 +507,9 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
        'FIRST_RATE_RESET_PERIOD_NAN', 	   
 	    'LLMA2_PRIME',
        'LLMA2_SUBPRIME', 'LLMA2_APPVAL_LT_SALEPRICE', 'LLMA2_ORIG_RATE_SPREAD',
-       'LLMA2_ORIG_RATE_SPREAD_NAN', 'AGI', 'AGI_NAN', 'UR', 'UR_NAN']
+       'LLMA2_ORIG_RATE_SPREAD_NAN', 'AGI', 'AGI_NAN', 'UR', 'UR_NAN', 'LLMA2_ORIG_RATE_ORIG_MR_SPREAD', 
+       'LLMA2_ORIG_RATE_ORIG_MR_SPREAD_NAN', 'COUNT_INT_RATE_LESS', 'NUM_PRIME_ZIP', 'NUM_PRIME_ZIP_NAN'
+       ]
         
 #    nan_cols = {'MBA_DAYS_DELINQUENT': 0, 'CURRENT_INTEREST_RATE': 0, 'LOANAGE': 0,
 #                'CURRENT_BALANCE' : 0, 'SCHEDULED_PRINCIPAL': 0, 'SCHEDULED_MONTHLY_PANDI': 0,       
@@ -530,7 +535,9 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
                 'FIRST_RATE_RESET_PERIOD': 'median', 'LLMA2_ORIG_RATE_SPREAD': 'median', 'AGI': 'median', 'UR': 'median',
                 'LLMA2_C_IN_LAST_12_MONTHS': 'median', 'LLMA2_30_IN_LAST_12_MONTHS': 'median', 'LLMA2_60_IN_LAST_12_MONTHS': 'median',
                 'LLMA2_90_IN_LAST_12_MONTHS': 'median', 'LLMA2_FC_IN_LAST_12_MONTHS': 'median',
-                'LLMA2_REO_IN_LAST_12_MONTHS': 'median', 'LLMA2_0_IN_LAST_12_MONTHS': 'median'}
+                'LLMA2_REO_IN_LAST_12_MONTHS': 'median', 'LLMA2_0_IN_LAST_12_MONTHS': 'median', 
+                'LLMA2_ORIG_RATE_ORIG_MR_SPREAD':0, 'COUNT_INT_RATE_LESS' :0, 'NUM_PRIME_ZIP':0
+                }
         
     categorical_cols = {'MBA_DELINQUENCY_STATUS':  ['0','3','6','9','C','F','R'], 'DELINQUENCY_STATUS_NEXT': ['0','3','6','9','C','F','R'],  #,'S','T','X'
                            'BUYDOWN_FLAG': ['N','U','Y'], 'NEGATIVE_AMORTIZATION_FLAG': ['N','U','Y'], 'PREPAY_PENALTY_FLAG': ['N','U','Y'],
@@ -544,9 +551,10 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
                                                'MD', 'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH', 'NJ', 'NM', 'NV', 
                                                'NY', 'OH', 'OK', 'OR', 'PA', 'PR', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 
                                                'WA', 'WI', 'WV', 'WY'], 
-                           'CURRENT_INVESTOR_CODE': ['240', '250', '253', 'U']}
+                           'CURRENT_INVESTOR_CODE': ['240', '250', '253', 'U'], 'ORIGINATION_YEAR':['1995','1996','1997','1998','1999','2000','2001','2002','2003',
+                                                    '2004','2005','2006','2007','2008','2009','2010','2011','2012','2013','2014','2015','2016','2017','2018']}
       
-    time_cols = ['YEAR', 'MONTH', 'PERIOD'] #no nan values        
+    time_cols = ['YEAR', 'MONTH'] #, 'PERIOD'] #no nan values        
     pd.set_option('io.hdf.default_format','table')
     
     dist_file = pd.read_csv(os.path.join(RAW_DIR, "percentile features2.csv"), sep=';', low_memory=False)
@@ -560,10 +568,10 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
     robust_cols = np.delete(robust_cols,to_delete, 0)            
     
     target_path = os.path.join(PRO_DIR, raw_dir,file_name[:-4])
-    with  pd.HDFStore(target_path +'-pp.h5', complib='blosc', complevel=9) as hdf:
+    with  pd.HDFStore(target_path +'-pp.h5', complib='bzip2', complevel=9) as hdf:
         gflag = ''    
         i = 1            
-        num_columns = 0
+        # num_columns = 0
         for chunk in pd.read_csv(file_path, chunksize = chunksize, sep=',', low_memory=False):    
             print('chunk: ', i)
             chunk.columns = chunk.columns.str.upper()                
@@ -575,25 +583,29 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
             
             nan_cols = imputing_nan_values(nan_cols, dist_file)
             chunk.fillna(value=nan_cols, inplace=True)   
+            chunk.drop_duplicates(inplace=True) # Follow this instruction!!
             
-            logger.info('dropping invalid transitions and delinquency status, fill nan values')                  
+            logger.info('dropping invalid transitions and delinquency status, fill nan values, drop duplicates')                  
             
             for k,v in categorical_cols.items():
                 new_cols = oneHotDummies_column(chunk[k], v)
                 chunk[new_cols.columns] = new_cols
-                
+            
+            chunk.set_index(['LOAN_ID', 'DELINQUENCY_STATUS_NEXT', 'PERIOD'], inplace=True)
             allfeatures_drop_cols(chunk, descriptive_cols)        
             allfeatures_drop_cols(chunk, time_cols)
-            allfeatures_drop_cols(chunk, categorical_cols.keys())
+            cat_list = list(categorical_cols.keys())
+            cat_list.remove('DELINQUENCY_STATUS_NEXT')
+            allfeatures_drop_cols(chunk, cat_list)
             
             if chunk.isnull().any().any(): raise ValueError('There are null values...File: ' + file_name)   
                     
             
-            for _ in range(4):
-                chunk = chunk.sample(frac=1, axis=0, replace=False)    
-            logger.info('sampled data shuffling with non replacement by 4 times')                  
+#            for _ in range(4):
+#                chunk = chunk.sample(frac=1, axis=0, replace=False)    
+#            logger.info('sampled data shuffling with non replacement by 4 times')                  
             
-            chunk = chunk.reset_index(drop=True)               
+            # chunk = chunk.reset_index(drop=True)                           
             if (refNorm==True):            
                 chunk[robust_cols] = robust_normalizer.transform(chunk[robust_cols])
                 chunk[minmax_cols] = minmax_normalizer.transform(chunk[minmax_cols])            
@@ -601,37 +613,147 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
             # chunk.to_csv(target_path +'-pp.csv', mode='a', index=False) 
             labels = allfeatures_extract_labels(chunk, columns=label)
             
-            total_rows = chunk.shape[0]
-            if dividing == 'percentage':            
-                v_num = int(round(total_rows*(float(valid_num)/100),0))
-                t_num = int(round(total_rows*(float(test_num)/100),0))
-                tr_num = total_rows - (v_num + t_num)
-            else:
-                v_num = valid_num
-                t_num = test_num
-                tr_num = train_num        
+#            total_rows = chunk.shape[0]
+#            if dividing == 'percentage':            
+#                v_num = int(round(total_rows*(float(valid_num)/100),0))
+#                t_num = int(round(total_rows*(float(test_num)/100),0))
+#                tr_num = total_rows - (v_num + t_num)
+#            else:
+#                v_num = valid_num
+#                t_num = test_num
+#                tr_num = train_num        
             
-            hdf.put('train/features', chunk.iloc[:tr_num, ], append=True)
-            hdf.put('train/labels', labels.iloc[:tr_num, ], append=True)                        
-            
-            hdf.put('valid/features', chunk.iloc[tr_num:tr_num + v_num, ], append=True)
-            hdf.put('valid/labels', labels.iloc[tr_num:tr_num + v_num, ], append=True)                        
-            
-            hdf.put('test/features', chunk.iloc[tr_num + v_num:, ], append=True)
-            hdf.put('test/labels', labels.iloc[tr_num + v_num:, ], append=True) 
-            num_columns = len(chunk.columns.values)
+#            hdf.put('train/features', chunk.iloc[:tr_num, ], append=True)
+#            hdf.put('train/labels', labels.iloc[:tr_num, ], append=True)                        
+#            
+#            hdf.put('valid/features', chunk.iloc[tr_num:tr_num + v_num, ], append=True)
+#            hdf.put('valid/labels', labels.iloc[tr_num:tr_num + v_num, ], append=True)                        
+#            
+#            hdf.put('test/features', chunk.iloc[tr_num + v_num:, ], append=True)
+#            hdf.put('test/labels', labels.iloc[tr_num + v_num:, ], append=True)                               
+            hdf.put('features', chunk, append=True) 
+            hdf.put('labels', labels, append=True) 
+            # num_columns = len(chunk.columns.values)
+            hdf.flush()
             del chunk
             del labels
             i +=  1   
-        hdf.get_storer('train/features').attrs.num_columns = num_columns
+        # hdf.get_storer('features').attrs.num_columns = num_columns
+        
+        if hdf.get_storer('features').nrows != hdf.get_storer('labels').nrows:
+                raise ValueError('DataSet: Sizes should match!')  
             
         logger.info('training, validation and testing set into .h5 file')    
 
-                        
-def get_h5_dataset(raw_dir, file_name):
-    target_path = os.path.join(PRO_DIR, raw_dir, file_name)
-    with  pd.HDFStore(target_path) as hdf:
-        DATA = data_classes.Dataset(h5_dataset=hdf)
+
+def get_other_set_slice(prep_dir, init_period, end_period, set_dir, file_name, chunk_size=8000000):
+    
+    pd.set_option('io.hdf.default_format','table')
+    try:
+        chunk_ind = 0
+        target_path = os.path.join(PRO_DIR, set_dir,file_name+'_{:d}.h5'.format(chunk_ind))        
+        hdf_target =  pd.HDFStore(target_path) 
+        print('Target Path: ', target_path)
+        total_rows = 0       
+        for file_path in glob.glob(os.path.join(PRO_DIR, prep_dir, "*.h5")): 
+            file_name = os.path.basename(file_path)        
+            with pd.HDFStore(file_path) as hdf_input:
+                # hdf_input.get['features'].                
+                # temp_features = pd.read_hdf(self.h5_path, self.dtype + '/features', start=self._global_index, stop=self._global_index + batch_size)        
+                # df = hdf_input.select('features', [ Term('index', '>', Timestamp('20010105') ])
+                period_range =  set(range(init_period, end_period+1))
+                period_features = set(list(hdf_input['features'].index.get_level_values(2)))
+                period_inter = period_features.intersection(period_range)
+                for i in list(period_inter):
+                    df_features = hdf_input['features'].loc[(slice(None), slice(None), i), :]
+                    df_labels = hdf_input['labels'].loc[(slice(None), slice(None), i), :]
+                    hdf_target.put('features', df_features, append=True) 
+                    hdf_target.put('labels', df_labels, append=True) 
+                    hdf_target.flush()
+                    total_rows += df_features.shape[0]
+                    num_columns = len(df_features.columns.values)
+                    del df_features
+                    del df_labels
+                    if (total_rows >= chunk_size or i==period_inter[-1]):
+                        if hdf_target.get_storer('features').nrows != hdf_target.get_storer('labels').nrows:
+                            raise ValueError('DataSet: Sizes should match!')
+                        hdf_target.get_storer('features').attrs.num_columns = num_columns
+                        hdf_target.close()
+                        total_rows = 0
+                        chunk_ind += 1
+                        if (i!=period_inter[-1]):
+                            target_path = os.path.join(PRO_DIR, set_dir,file_name+'_{:d}.h5'.format(chunk_ind))
+                            hdf_target =  pd.HDFStore(target_path) 
+                            print('Target Path: ', target_path)                        
+        if hdf_target.is_open(): hdf_target.close()
+    except Exception as e:
+        hdf_target.close()
+        print(e)        
+                    
+
+def get_other_set(prep_dir, init_period, end_period, set_dir, chunk_size=8000000):
+    
+    pd.set_option('io.hdf.default_format','table')
+    try:
+        chunk_ind = 0
+        for file_path in glob.glob(os.path.join(PRO_DIR, prep_dir, "*.h5")): 
+            file_name = os.path.basename(file_path)        
+            print(file_name)
+            with pd.HDFStore(file_path) as hdf_input:  
+                file_index = 0
+                for df_features in hdf_input.select('features', "PERIOD>=" + str(init_period) + ' & PERIOD<=' + str(end_period), chunksize = chunk_size):
+                    try:
+                        target_path = os.path.join(PRO_DIR, set_dir,file_name[:-4]+'_{:d}.h5'.format(chunk_ind))
+                        hdf_target =  pd.HDFStore(target_path) 
+                        print('Target Path: ', target_path)
+    
+                        if file_index + chunk_size <= hdf_input.get_storer('features').nrows:
+                            df_labels = hdf_input.select('labels', "PERIOD>=" + str(init_period) + ' & PERIOD<=' + str(end_period), start = file_index, stop = file_index + chunk_size)
+                            file_index += chunk_size
+                        else:
+                            df_labels = hdf_input.select('labels', "PERIOD>=" + str(init_period) + ' & PERIOD<=' + str(end_period), start = file_index)
+                            file_index = 0
+                        hdf_target.put('features', df_features, append=True) 
+                        hdf_target.put('labels', df_labels, append=True) 
+                        hdf_target.flush()
+                        num_columns = len(df_features.columns.values)                    
+                        hdf_target.get_storer('features').attrs.num_columns = num_columns
+                        if hdf_target.get_storer('features').nrows != hdf_target.get_storer('labels').nrows:
+                            raise ValueError('DataSet: Sizes should match!')
+                        hdf_target.close()
+                        del df_labels
+                        del df_features                    
+                        chunk_ind += 1
+                    except Exception as e:
+                        if hdf_target.is_open(): hdf_target.close()
+    except Exception as e:        
+        print(e)        
+            
+def get_dataset_metadata(train_dir):
+    train_path = os.path.join(PRO_DIR, train_dir)
+    all_files = glob.glob(os.path.join(train_path, "*.h5"))
+    files_dict = {}
+    files_dict[0] = 0
+    for i, file_path in zip(range(len(all_files)),all_files):    
+        dataset = pd.HDFStore(file_path) # the first file of the path
+        nrows = dataset.get_storer('features').nrows
+        files_dict[i+1] = {'path': file_path, 'nrows': nrows}        
+        files_dict[0] += nrows
+        if dataset.is_open: dataset.close()
+    # total_rows = 0
+#    values_list = list(files_dict.values())
+#    for e in values_list[1:]:
+#        files_dict[0] += e['nrows']
+    
+    # files_dict[0] = total_rows
+    return files_dict
+                       
+def get_h5_dataset(train_dir, valid_dir, test_dir, training_dict, train_period=[121, 279], valid_period=[280,285], test_period=[286, 304]):
+    train_path = os.path.join(PRO_DIR, train_dir)
+    valid_path = os.path.join(PRO_DIR, valid_dir)
+    test_path = os.path.join(PRO_DIR, test_dir)    
+    DATA = data_classes.Dataset(train_path=train_path, valid_path=valid_path, test_path=test_path, 
+                                train_period=train_period, valid_period=valid_period, test_period=test_period, train_dict = training_dict)
         
     return DATA
 
@@ -679,7 +801,10 @@ def main(project_dir):
     """   
     logger.name ='__main__'     
     logger.info('Retrieving DataFrame from Raw Data, Data Sampling')    
-    allfeatures_preprocessing('chunks_all_c100th', 70, 10, 20, dividing='percentage', chunksize=500000, refNorm=True)        
+    # allfeatures_preprocessing('chunks_all_c100th', 70, 10, 20, dividing='percentage', chunksize=500000, refNorm=True)        
+    startTime = datetime.now()
+    get_other_set('chunks_all_c100th', 280, 285, 'validation_set') # from     
+    print('Extracting Process in Validation Set - Time: ', datetime.now() - startTime)
 
 
 

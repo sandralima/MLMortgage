@@ -145,7 +145,7 @@ def create_weights(name, shape, reg_rate, allow_summaries):
     kernel_initializer = tf.truncated_normal_initializer(
         stddev=(1.0 / np.sqrt(shape[0])), dtype=dtype)
 
-    regularizer = tf.contrib.layers.l1_regularizer(
+    regularizer = tf.contrib.layers.l2_regularizer(
         np.float32(reg_rate), 'penalty')
     return _create_variable(name, shape, allow_summaries, kernel_initializer, regularizer,
                             dtype)
@@ -344,7 +344,7 @@ def calculate_loss(labels, logits, weights, reg_rate):
         return tf.add(weighted_cross_entropy, penalty, name=scope) # Returns x + y element-wise.
 
 
-def train(loss, FLAGS):
+def train(loss, FLAGS, epoch_flag):
     """Set up the training Ops.
 
     Create an optimizer and apply the gradients to all trainable variables. The
@@ -358,7 +358,7 @@ def train(loss, FLAGS):
         train_op: The Op for training.
     """
 
-    def get_learning_rate(initial_learning_rate, global_step):
+    def get_learning_rate(initial_learning_rate, epoch_flag):
         """Get the learning rate."""
         with tf.name_scope('learning_rate') as scope:
             # decayed_lr = tf.train.exponential_decay(
@@ -369,7 +369,7 @@ def train(loss, FLAGS):
             #     staircase=False)
             decayed_lr = tf.train.inverse_time_decay(
                 initial_learning_rate,
-                global_step,
+                epoch_flag,
                 decay_steps=FLAGS.decay_step,
                 decay_rate=FLAGS.decay_rate)
             final_lr = tf.clip_by_value(
@@ -385,23 +385,27 @@ def train(loss, FLAGS):
     with ops.control_dependencies(update_ops):
         with tf.name_scope('train') as scope:
             # print_loss = tf.Print(loss, [loss], name='print_loss') 
+
             # Create a variable to track the global step.
-            global_step = tf.get_variable(
-                'train/global_step',
-                shape=[],
-                initializer=tf.constant_initializer(0, dtype=tf.int32),
-                trainable=False)
-            final_learning_rate = get_learning_rate(FLAGS.learning_rate, global_step)
+#            global_step = tf.get_variable(
+#                'train/global_step',
+#                shape=[],
+#                initializer=tf.constant_initializer(0, dtype=tf.int32),
+#                trainable=False)            
+            
+            final_learning_rate = get_learning_rate(FLAGS.learning_rate, epoch_flag)
 
             # optimizer = tf.train.GradientDescentOptimizer(final_learning_rate)
-            # optimizer = tf.train.MomentumOptimizer(
-            #     final_learning_rate, FLAGS.momentum, use_nesterov=True)
-            optimizer = tf.train.AdagradOptimizer(final_learning_rate)
+            optimizer = tf.train.MomentumOptimizer(final_learning_rate, FLAGS.momentum, use_nesterov=True)
+            # optimizer = tf.train.AdagradOptimizer(final_learning_rate)
 
             # Use the optimizer to apply the gradients that minimize the loss
             # (and increment the global step counter) as a single training step.
+#            return optimizer.minimize(
+#                loss, global_step=global_step, name=scope)
             return optimizer.minimize(
-                loss, global_step=global_step, name=scope)
+                loss, global_step=None, name=scope)
+
 
 
 def get_accuracy(labels_int, logits, name):
@@ -716,6 +720,7 @@ def build_graph(architecture, FLAGS):
             DT_FLOAT, [None, architecture['n_input']], name='features')
         labels = tf.placeholder(
             DT_FLOAT, [None, architecture['n_classes']], name='targets')
+        epoch_flag = tf.placeholder(tf.int32, None, name='epoch_flag')
         example_weights = tf.placeholder(
             DT_FLOAT, [None], name='example_weights')
         logits = inference(features, architecture, FLAGS) #makes all processing from input (features) to output (nn_layer) but with tf.placeholders
@@ -723,7 +728,7 @@ def build_graph(architecture, FLAGS):
         # Accuracy is only for reporting purposes, won't be used to train.
         accuracy, conf_mtx, auc_list, m_list, lloss, auc_pr, auc_data = calculate_metrics( # ---, labels_int, predictions, probs, pr_auc
             labels, logits)
-        train(loss, FLAGS)
+        train(loss, FLAGS, epoch_flag)
         with tf.name_scope('0_performance'):
             # Scalar summaries to track the loss and accuracy over time in TB.
             tf.summary.scalar('0accuracy', accuracy)
@@ -834,7 +839,12 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
     def train_one_epoch(epoch, batch_size):
         print("Epoch: ", epoch)		
         
-        batch_num = math.ceil(np.float32(DATA.train.num_examples / batch_size))        
+        if FLAGS.max_epoch_size==-1:
+            batch_num = math.ceil(np.float32(DATA.train.num_examples / batch_size))        
+        elif (FLAGS.max_epoch_size > DATA.train.num_examples):
+            raise ValueError('ERROR: The max_epoch_size must not be greater than the train.num_examples')
+        else:
+            batch_num = math.ceil(np.float32( FLAGS.max_epoch_size / batch_size))
         epoch_metrics_train = acc_metrics_init(DATA)        
         start_time = datetime.now()
         for batch_i in range(batch_num):
@@ -851,7 +861,7 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
             batch_metrics_train = get_metrics(sess, batch_dict)        
             epoch_metrics_train = batch_stats(epoch_metrics_train, batch_metrics_train)             
             print('Batch Time: ', datetime.now() - batch_time)            
-        # The division should stay outside the inner for loop.
+        
         epoch_metrics = (epoch_metrics_train[0], epoch_metrics_train[1]/batch_num, epoch_metrics_train[2]/batch_num, epoch_metrics_train[3]/batch_num, 
                          epoch_metrics_train[4]/batch_num, epoch_metrics_train[5]/batch_num, epoch_metrics_train[6]/batch_num)
         
@@ -875,6 +885,7 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
         checkpoint_file = os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number)) #'/model.ckpt' # os.path.join(FLAGS.logdir, 'model.ckpt')
         for epoch in range(FLAGS.epoch_num):
 #            try:
+            FLAGS.epoch_flag = epoch
             epoch_metrics = train_one_epoch(epoch, FLAGS.batch_size)
             bett_acc_train, m_mtx_mean_train, auc_aoc_mean_train, auc_pr_mean_train = print_stats(epoch_metrics, 'train')        
             # Validation set:                                
@@ -1090,15 +1101,15 @@ def write_summaries(sess, writers, mode, step, feed_dict):
 def create_feed_dict(tag, DATA, FLAGS):
     """Create the feed dictionary for mapping data onto placeholders in the graph."""
     if tag == 'batch':
-        features, targets, example_weights = DATA.train.next_ooc_batch(FLAGS.batch_size)        
+        features, targets, example_weights = DATA.train.next_random_batch(FLAGS.batch_size)        
     elif tag == 'train':
         features = DATA.train.orig.features
         targets = DATA.train.orig.labels
         example_weights = np.ones_like(targets.iloc[:, 1].values)
     elif tag == 'valid':
-        features, targets, example_weights = DATA.validation.next_ooc_batch(FLAGS.batch_size)
+        features, targets, example_weights = DATA.validation.next_sequential_batch(FLAGS.batch_size)
     else:
-        features, targets, example_weights = DATA.test.next_ooc_batch(FLAGS.batch_size)
+        features, targets, example_weights = DATA.test.next_sequential_batch(FLAGS.batch_size)
 
     # features[:, :7] = targets
     if tag == 'batch':
@@ -1116,8 +1127,9 @@ def create_feed_dict(tag, DATA, FLAGS):
     feed_d = {
         'features:0': features,
         'targets:0': targets,
-        'example_weights:0': example_weights,
+        'example_weights:0': example_weights,        
         'train_flag:0': t_flag,
+        'epoch_flag:0': FLAGS.epoch_flag,
         #'1_hidden/dropout/keep_proba:0': k_prob_input,
         #'2_hidden/dropout/keep_proba:0': k_prob,
         # '3_hidden/dropout/keep_proba:0': k_prob,
@@ -1157,15 +1169,15 @@ def FLAGS_setting(FLAGS, flag_num):
     # Hyperparameters
     FLAGS.epoch_num = 50  # 14  # 17  # 35  # 15
     #print("FLAGS.epoch_num", FLAGS.epoch_num)
-    FLAGS.batch_size = 1024  
+    FLAGS.batch_size = 4000  
     FLAGS.dropout_keep = 0.9  # 0.9  # 0.95  # .75  # .6
     # ### parameters for training optimizer.
-    FLAGS.learning_rate = .25  # .075  # .15  # .25
+    FLAGS.learning_rate = .1  # .075  # .15  # .25
     FLAGS.momentum = .5  # used by the momentum SGD.
 
     # ### parameters for inverse_time_decay
     FLAGS.decay_rate = 1
-    FLAGS.decay_step = 1 * 80000 #according to paper: 800 epochs
+    FLAGS.decay_step = 800 # 1 * 80000 #according to paper: 800 epochs
     FLAGS.rate_min = .0015
     # ### parameters for exponential_decay
     # FLAGS.decay_base = .96  # .96
@@ -1186,6 +1198,8 @@ def FLAGS_setting(FLAGS, flag_num):
     FLAGS.n_hidden = 3
     FLAGS.s_hidden = [200, 140, 140]
     FLAGS.allow_summaries = False
+    FLAGS.epoch_flag = 0
+    FLAGS.max_epoch_size = 30000
     
     if FLAGS.n_hidden < 0 : raise ValueError('The size of hidden layer must be at least 0')
     if (FLAGS.n_hidden > 0) and (FLAGS.n_hidden != len(FLAGS.s_hidden)) : raise ValueError('Sizes in hidden layers should match!')
@@ -1212,26 +1226,30 @@ def architecture_settings(DATA, FLAGS):
 def main(_):
     print("Run the main program.")
 
-    FLAGS, UNPARSED = update_parser(argparse.ArgumentParser())
-    print("FLAGS", FLAGS)
+    FLAGS, UNPARSED = update_parser(argparse.ArgumentParser())    
     print("UNPARSED", UNPARSED)    
-        
+    
     if tf.gfile.Exists(FLAGS.logdir):
        tf.gfile.DeleteRecursively(FLAGS.logdir)
     tf.gfile.MakeDirs(FLAGS.logdir)    
 
     conf_number = 1    
-    subdir_name = 'chunks_all_c100th'
-    for file_path in glob.glob(os.path.join(PRO_DIR, subdir_name,"*.h5")):  
-        file_name = os.path.basename(file_path)
-        print('Dataset: ' + file_name)
-        np.random.seed(RANDOM_SEED)  # pylint: disable=no-member
-        DATA = md.get_h5_data(subdir_name, file_name) #'temporalloandynmodifmrstaticitur1-100th-pp.h5'
-        for i in range(conf_number):                        
-            FLAGS = FLAGS_setting(FLAGS, i)
-            architecture = architecture_settings(DATA, FLAGS)
-            graph = build_graph(architecture, FLAGS)        
-            run_model(graph, file_name[:-4], i,  FLAGS, DATA)            
+    train_dir = 'chunks_all_c100th'
+    valid_dir = 'valid_set'
+    test_dir = 'chunks_all_c100th'
+    training_dict = md.get_dataset_metadata(train_dir)
+    DATA = md.get_h5_data(train_dir, valid_dir, test_dir, training_dict) 
+    
+#    for file_path in glob.glob(os.path.join(PRO_DIR, subdir_name,"*.h5")):  
+#        file_name = os.path.basename(file_path)
+#        print('Dataset: ' + file_name)    
+    
+    for i in range(conf_number):                        
+        FLAGS = FLAGS_setting(FLAGS, i)
+        print("FLAGS", FLAGS)
+        architecture = architecture_settings(DATA, FLAGS)
+        graph = build_graph(architecture, FLAGS)        
+        run_model(graph, 'testing_data', i,  FLAGS, DATA)            
     #FLAGS = FLAGS_setting(FLAGS, 1)
     #graph = build_graph(architecture, FLAGS)        
     #run_model(graph, 'Data1-100_' + FLAGS.name, 1,  FLAGS, DATA)    
@@ -1275,7 +1293,7 @@ def update_parser(parser):
         '--s_hidden',
         type=int,
         nargs='*',
-        default=[100, 140, 140],
+        default=[200, 140, 140],
         help='Size of each hidden layer.')
     parser.add_argument(
         '--stratified_flag',
@@ -1297,6 +1315,11 @@ def update_parser(parser):
         type=bool,
         default=True,
         help='Summaries by variable')
+    parser.add_argument(
+        '--max_epoch_size',
+        type=int,
+        default=-1,
+        help='How many observations will be passed by epoch. default value=-1 (all training set)')
     return parser.parse_known_args()
 
 # %%

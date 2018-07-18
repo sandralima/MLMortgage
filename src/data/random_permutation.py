@@ -73,15 +73,15 @@ class CustomRandom(object):
     
     def get_batch(self, batch_size):
         
-        batch_random = []
-        z = 0
+        batch_random = set()
+        # z = 0
         r = 0
         while True:        
             value = self.next()
             if value <= self.max_parms:
-                batch_random.append(value)
-                z +=1
-                if z >=batch_size:
+                batch_random.add(value) #.append(value)
+                # z +=1
+                if len(batch_random) >=batch_size:
                     break
             else: r+=1            
         print('randoms refused: ', r)
@@ -95,9 +95,9 @@ def dump():
     for i in range(20):
         batch_size = 1024
         startTime = datetime.now()                        
-        print('Iteration: ', i)
-        print('Time for Getting' + str(batch_size) +' random elements: ', datetime.now() - startTime)
+        print('Iteration: ', i)        
         batch_random = myRandom.get_batch(batch_size)
+        print('Time for Getting' + str(batch_size) +' random elements: ', datetime.now() - startTime)
         median = np.median(batch_random)
         iqr = np.percentile(batch_random, [25, 75])
         print('median: ', median, 'iqr: ', iqr)

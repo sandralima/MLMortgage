@@ -278,6 +278,10 @@ def oneHotDummies_column(column, categories):
     cat_column = pd.Categorical(column.astype('str'), categories=categories)
     cat_column = pd.get_dummies(cat_column)   # in the same order as categories! (alphabetically ordered) 
     cat_column = cat_column.add_prefix(column.name + '_')
+    if (cat_column.isnull().any().any()):
+        null_cols = cat_column.columns[cat_column.isnull().any()]
+        print(cat_column[null_cols].isnull().sum())
+        print(cat_column[cat_column.isnull().any(axis=1)][null_cols].head(50))
     return cat_column
     
 
@@ -403,8 +407,10 @@ def drop_invalid_delinquency_status(data, gflag):
                          | (group['MBA_DELINQUENCY_STATUS'] =='X') | (group['MBA_DELINQUENCY_STATUS'] =='Z')].tolist()
         if li: iuw= iuw.union(group.index[group.index.get_loc(li[0]):])
         # In case of REO or Paid-Off, we need to exclude since the next record:
-        track_i = group[(group['MBA_DELINQUENCY_STATUS'] =='0') | (group['MBA_DELINQUENCY_STATUS'] =='R')].index[0]
-        if track_i: iuw= iuw.union(group.index[group.index.get_loc(track_i)+1:])
+        df_delinq_01 = group[(group['MBA_DELINQUENCY_STATUS'] =='0') | (group['MBA_DELINQUENCY_STATUS'] =='R')]
+        if df_delinq_01.shape[0]>0: 
+            track_i = df_delinq_01.index[0]
+            iuw= iuw.union(group.index[group.index.get_loc(track_i)+1:])
         
     if iuw!=[]:                        
         data.drop(iuw, inplace=True) 
@@ -418,15 +424,20 @@ def custom_robust_normalizer(ncols, dist_file, normalizer_type='robust_scaler_sk
     scales = []
     centers = []
     for i, x in enumerate (ncols):                        
-        x_frame = dist_file.iloc[:, np.where(pd.DataFrame(dist_file.columns.values)[0].str.contains(x+'_'))[0]]    
-        if not x_frame.empty:            
-            scales.append(float(pd.to_numeric(x_frame[x+'_Q3'], errors='coerce').subtract(pd.to_numeric(x_frame[x+'_Q1'], errors='coerce'))))                    
-            if center_value == 'median':
-                centers.append( float(x_frame[x+'_MEDIAN']) )   
-            else:
-                centers.append( float(x_frame[x+'_Q1']) )           
-            norm_cols.append(x)
-    
+        x_frame = dist_file.iloc[:, np.where(pd.DataFrame(dist_file.columns.values)[0].str.contains(x+'_Q'))[0]]    
+        if not x_frame.empty:       
+            iqr = float(pd.to_numeric(x_frame[x+'_Q3'], errors='coerce').subtract(pd.to_numeric(x_frame[x+'_Q1'], errors='coerce')))
+            if iqr!=0: 
+                norm_cols.append(x)                
+                scales.append(iqr)                    
+                if center_value == 'median':
+                    centers.append( float(x_frame[x+'_MEDIAN']) )   
+                else:
+                    centers.append( float(x_frame[x+'_Q1']) )                       
+#        else:
+#            scales.append(float(0.))
+#            centers.append(float(0.))
+                
     if (normalizer_type == 'robust_scaler_sk'):    
         normalizer = RobustScaler()
         normalizer.scale_ = scales
@@ -441,19 +452,19 @@ def custom_minmax_normalizer(ncols, scales, dist_file):
     norm_cols = []
     minmax_scales = []
     centers = []
-    to_delete =[]
+    # to_delete =[]
     for i, x in enumerate (ncols):  
-        if scales[i] == 0:
-            x_frame = dist_file.iloc[:, np.where(pd.DataFrame(dist_file.columns.values)[0].str.contains(x+'_'))[0]]    
-            if not x_frame.empty:            
-                minmax_scales.append(float(x_frame[x+'_MAX'].subtract(x_frame[x+'_MIN'])))                            
-                centers.append( float(x_frame[x+'_MIN']))
-                norm_cols.append(x)
-                to_delete.append(i)
+#        if scales[i] == 0:
+        x_frame = dist_file.iloc[:, np.where(pd.DataFrame(dist_file.columns.values)[0].str.contains(x+'_M'))[0]]    
+        if not(x_frame.empty) and (x_frame.shape[1]>1):            
+            minmax_scales.append(float(x_frame[x+'_MAX'].subtract(x_frame[x+'_MIN'])))                            
+            centers.append( float(x_frame[x+'_MIN']))
+            norm_cols.append(x)
+            # to_delete.append(i)
         
     normalizer = Normalizer.Normalizer(minmax_scales, centers)         
     
-    return norm_cols, normalizer, to_delete
+    return norm_cols, normalizer #, to_delete
 
 def imputing_nan_values(nan_dict, distribution):        
     new_dict = {}
@@ -465,7 +476,7 @@ def imputing_nan_values(nan_dict, distribution):
             
     return new_dict
 
-def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num, test_num, dividing='percentage', chunksize=500000, 
+def allfeatures_prepro_file(file_path, raw_dir, file_name, train_period, valid_period, test_period, dividing='percentage', chunksize=500000, 
                             refNorm=True, label='DELINQUENCY_STATUS_NEXT'):
     descriptive_cols = [
 #        'LOAN_ID',
@@ -536,7 +547,7 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
                 'LLMA2_C_IN_LAST_12_MONTHS': 'median', 'LLMA2_30_IN_LAST_12_MONTHS': 'median', 'LLMA2_60_IN_LAST_12_MONTHS': 'median',
                 'LLMA2_90_IN_LAST_12_MONTHS': 'median', 'LLMA2_FC_IN_LAST_12_MONTHS': 'median',
                 'LLMA2_REO_IN_LAST_12_MONTHS': 'median', 'LLMA2_0_IN_LAST_12_MONTHS': 'median', 
-                'LLMA2_ORIG_RATE_ORIG_MR_SPREAD':0, 'COUNT_INT_RATE_LESS' :0, 'NUM_PRIME_ZIP':0
+                'LLMA2_ORIG_RATE_ORIG_MR_SPREAD':0, 'COUNT_INT_RATE_LESS' :'median', 'NUM_PRIME_ZIP':'median'
                 }
         
     categorical_cols = {'MBA_DELINQUENCY_STATUS':  ['0','3','6','9','C','F','R'], 'DELINQUENCY_STATUS_NEXT': ['0','3','6','9','C','F','R'],  #,'S','T','X'
@@ -551,52 +562,62 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
                                                'MD', 'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH', 'NJ', 'NM', 'NV', 
                                                'NY', 'OH', 'OK', 'OR', 'PA', 'PR', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 
                                                'WA', 'WI', 'WV', 'WY'], 
-                           'CURRENT_INVESTOR_CODE': ['240', '250', '253', 'U'], 'ORIGINATION_YEAR':['1995','1996','1997','1998','1999','2000','2001','2002','2003',
+                           'CURRENT_INVESTOR_CODE': ['240', '250', '253', 'U'], 'ORIGINATION_YEAR': ['1995','1996','1997','1998','1999','2000','2001','2002','2003',
                                                     '2004','2005','2006','2007','2008','2009','2010','2011','2012','2013','2014','2015','2016','2017','2018']}
       
     time_cols = ['YEAR', 'MONTH'] #, 'PERIOD'] #no nan values        
     pd.set_option('io.hdf.default_format','table')
     
-    dist_file = pd.read_csv(os.path.join(RAW_DIR, "percentile features2.csv"), sep=';', low_memory=False)
+    dist_file = pd.read_csv(os.path.join(RAW_DIR, "percentile features3.csv"), sep=';', low_memory=False)
     dist_file.columns = dist_file.columns.str.upper()
     
     ncols = [x for x in numeric_cols if x.find('NAN')<0]
     robust_cols, robust_normalizer = custom_robust_normalizer(ncols, dist_file, center_value='quantile', normalizer_type='percentile_scaler')    
-    minmax_cols, minmax_normalizer, to_delete = custom_minmax_normalizer(robust_cols, robust_normalizer.scale_, dist_file)        
-    robust_normalizer.scale_ = np.delete(robust_normalizer.scale_,to_delete, 0)
-    robust_normalizer.center_ = np.delete(robust_normalizer.center_,to_delete, 0)
-    robust_cols = np.delete(robust_cols,to_delete, 0)            
+    minmax_cols, minmax_normalizer = custom_minmax_normalizer(ncols, robust_normalizer.scale_, dist_file)            
+    # robust_normalizer.scale_ = np.delete(robust_normalizer.scale_,to_delete, 0)
+    # robust_normalizer.center_ = np.delete(robust_normalizer.center_,to_delete, 0)
+    # robust_cols = np.delete(robust_cols,to_delete, 0)            
+    
+    inters = set(robust_cols).intersection(minmax_cols)
+    to_delete = [i for x,i in zip(minmax_cols,range(len(minmax_cols))) if x in inters]
+    minmax_normalizer.scale_ = np.delete(minmax_normalizer.scale_,to_delete, 0)
+    minmax_normalizer.center_ = np.delete(minmax_normalizer.center_,to_delete, 0)
+    minmax_cols = np.delete(minmax_cols,to_delete, 0)            
     
     target_path = os.path.join(PRO_DIR, raw_dir,file_name[:-4])
     with  pd.HDFStore(target_path +'-pp.h5', complib='bzip2', complevel=9) as hdf:
         gflag = ''    
-        i = 1            
-        # num_columns = 0
+        i = 1                  
+        train_index = 0
+        valid_index = 0
+        test_index = 0
         for chunk in pd.read_csv(file_path, chunksize = chunksize, sep=',', low_memory=False):    
             print('chunk: ', i)
-            chunk.columns = chunk.columns.str.upper()                
+            chunk.columns = chunk.columns.str.upper()                            
             
             chunk.drop(chunk.index[chunk[label].isnull()], axis=0, inplace=True)
             chunk.drop(chunk.index[chunk['INVALID_TRANSITIONS']==1], axis=0, inplace=True)        
-            gflag = drop_invalid_delinquency_status(chunk, gflag)
-            chunk = chunk.reset_index(drop=True)   
-            
+            gflag = drop_invalid_delinquency_status(chunk, gflag)               
+                        
             nan_cols = imputing_nan_values(nan_cols, dist_file)
             chunk.fillna(value=nan_cols, inplace=True)   
-            chunk.drop_duplicates(inplace=True) # Follow this instruction!!
-            
+            chunk.drop_duplicates(inplace=True) # Follow this instruction!!                        
             logger.info('dropping invalid transitions and delinquency status, fill nan values, drop duplicates')                  
-            
+                       
+            chunk.reset_index(drop=True, inplace=True)  #don't remove this line! otherwise NaN values appears.
             for k,v in categorical_cols.items():
                 new_cols = oneHotDummies_column(chunk[k], v)
                 chunk[new_cols.columns] = new_cols
-            
-            chunk.set_index(['LOAN_ID', 'DELINQUENCY_STATUS_NEXT', 'PERIOD'], inplace=True)
+                        
             allfeatures_drop_cols(chunk, descriptive_cols)        
             allfeatures_drop_cols(chunk, time_cols)
             cat_list = list(categorical_cols.keys())
             cat_list.remove('DELINQUENCY_STATUS_NEXT')
             allfeatures_drop_cols(chunk, cat_list)
+
+            chunk.reset_index(drop=True, inplace=True)  
+            # p_chunk = p_chunk.reindex('index', range(train_index, train_index + p_chunk.shape[0]))
+            chunk.set_index(['LOAN_ID', 'DELINQUENCY_STATUS_NEXT', 'PERIOD'], append=True, inplace=True) #4 indexes
             
             if chunk.isnull().any().any(): raise ValueError('There are null values...File: ' + file_name)   
                     
@@ -609,30 +630,49 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
             if (refNorm==True):            
                 chunk[robust_cols] = robust_normalizer.transform(chunk[robust_cols])
                 chunk[minmax_cols] = minmax_normalizer.transform(chunk[minmax_cols])            
+                
+            if chunk.isnull().any().any(): raise ValueError('There are null values...File: ' + file_name)   
+            
+            # this sintax works only with arrays, not with slicing:
+            # myselect = chunk.loc[(slice(None), slice(None), slice(None), [121,122]), :]
+            # another method:
+            # idx = pd.IndexSlice
+            # chunk3 = chunk.loc[idx[:, :, :, [121, 122]], :] #with arrays too!!!            
+            chunk_periods = set(list(chunk.index.get_level_values('PERIOD')))
+            
+            inter_periods = list(chunk_periods.intersection(set(range(train_period[0], train_period[1]+1))))            
+            p_chunk = chunk.loc[(slice(None), slice(None), slice(None), inter_periods), :]
+            # p_chunk.index = p_chunk.index.set_levels(range(train_index, train_index + p_chunk.shape[0]), level=0)
+            p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(train_index, train_index + p_chunk.shape[0]))])
+            labels = allfeatures_extract_labels(p_chunk, columns=label)            
+            hdf.put('train/features', p_chunk, append=True)
+            hdf.put('train/labels', labels, append=True)                        
+            train_index += p_chunk.shape[0]
 
-            # chunk.to_csv(target_path +'-pp.csv', mode='a', index=False) 
-            labels = allfeatures_extract_labels(chunk, columns=label)
             
-#            total_rows = chunk.shape[0]
-#            if dividing == 'percentage':            
-#                v_num = int(round(total_rows*(float(valid_num)/100),0))
-#                t_num = int(round(total_rows*(float(test_num)/100),0))
-#                tr_num = total_rows - (v_num + t_num)
-#            else:
-#                v_num = valid_num
-#                t_num = test_num
-#                tr_num = train_num        
+            inter_periods = list(chunk_periods.intersection(set(range(valid_period[0], valid_period[1]+1))))
+            p_chunk = chunk.loc[(slice(None), slice(None), slice(None), inter_periods), :]
+#            p_chunk = p_chunk.reset_index(drop=True)
+#            p_chunk = p_chunk.reindex(range(valid_index, valid_index + p_chunk.shape[0]))
+#            p_chunk.set_index(['LOAN_ID', 'DELINQUENCY_STATUS_NEXT', 'PERIOD'], append=True, inplace=True)
+            p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(valid_index, valid_index + p_chunk.shape[0]))])
+            labels = allfeatures_extract_labels(p_chunk, columns=label)                        
+            hdf.put('valid/features', p_chunk, append=True)
+            hdf.put('valid/labels', labels, append=True) 
+            valid_index += p_chunk.shape[0]                                   
             
-#            hdf.put('train/features', chunk.iloc[:tr_num, ], append=True)
-#            hdf.put('train/labels', labels.iloc[:tr_num, ], append=True)                        
-#            
-#            hdf.put('valid/features', chunk.iloc[tr_num:tr_num + v_num, ], append=True)
-#            hdf.put('valid/labels', labels.iloc[tr_num:tr_num + v_num, ], append=True)                        
-#            
-#            hdf.put('test/features', chunk.iloc[tr_num + v_num:, ], append=True)
-#            hdf.put('test/labels', labels.iloc[tr_num + v_num:, ], append=True)                               
-            hdf.put('features', chunk, append=True) 
-            hdf.put('labels', labels, append=True) 
+            inter_periods = list(chunk_periods.intersection(set(range(test_period[0], test_period[1]+1))))
+            p_chunk = chunk.loc[(slice(None), slice(None), slice(None), inter_periods), :]
+#            p_chunk = p_chunk.reset_index(drop=True)
+#            p_chunk = p_chunk.reindex(range(test_index, test_index + p_chunk.shape[0]))
+#            p_chunk.set_index(['LOAN_ID', 'DELINQUENCY_STATUS_NEXT', 'PERIOD'], append=True, inplace=True)
+            p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(test_index, test_index + p_chunk.shape[0]))])
+            labels = allfeatures_extract_labels(p_chunk, columns=label)            
+            hdf.put('test/features', p_chunk, append=True)
+            hdf.put('test/labels', labels, append=True)                        
+            test_index += p_chunk.shape[0]                                    
+#            hdf.put('features', chunk, append=True) 
+#            hdf.put('labels', labels, append=True) 
             # num_columns = len(chunk.columns.values)
             hdf.flush()
             del chunk
@@ -640,8 +680,12 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num,
             i +=  1   
         # hdf.get_storer('features').attrs.num_columns = num_columns
         
-        if hdf.get_storer('features').nrows != hdf.get_storer('labels').nrows:
-                raise ValueError('DataSet: Sizes should match!')  
+        if hdf.get_storer('train/features').nrows != hdf.get_storer('train/labels').nrows:
+                raise ValueError('Train-DataSet: Sizes should match!')  
+        if hdf.get_storer('valid/features').nrows != hdf.get_storer('valid/labels').nrows:
+                raise ValueError('Valid-DataSet: Sizes should match!')  
+        if hdf.get_storer('test/features').nrows != hdf.get_storer('test/labels').nrows:
+                raise ValueError('Test-DataSet: Sizes should match!')  
             
         logger.info('training, validation and testing set into .h5 file')    
 
@@ -695,7 +739,7 @@ def get_other_set(prep_dir, init_period, end_period, set_dir, chunk_size=8000000
     
     pd.set_option('io.hdf.default_format','table')
     try:
-        chunk_ind = 0
+        chunk_ind = 0        
         for file_path in glob.glob(os.path.join(PRO_DIR, prep_dir, "*.h5")): 
             file_name = os.path.basename(file_path)        
             print(file_name)
@@ -728,32 +772,48 @@ def get_other_set(prep_dir, init_period, end_period, set_dir, chunk_size=8000000
                         if hdf_target.is_open(): hdf_target.close()
     except Exception as e:        
         print(e)        
-            
-def get_dataset_metadata(train_dir):
-    train_path = os.path.join(PRO_DIR, train_dir)
-    all_files = glob.glob(os.path.join(train_path, "*.h5"))
-    files_dict = {}
-    files_dict[0] = 0
-    for i, file_path in zip(range(len(all_files)),all_files):    
-        dataset = pd.HDFStore(file_path) # the first file of the path
-        nrows = dataset.get_storer('features').nrows
-        files_dict[i+1] = {'path': file_path, 'nrows': nrows}        
-        files_dict[0] += nrows
-        if dataset.is_open: dataset.close()
-    # total_rows = 0
-#    values_list = list(files_dict.values())
-#    for e in values_list[1:]:
-#        files_dict[0] += e['nrows']
+
+def get_other_set(prep_dir, set_dir, tag, chunk_size=400000):
     
-    # files_dict[0] = total_rows
-    return files_dict
+    pd.set_option('io.hdf.default_format','table')
+    try:
+        chunk_ind = 0        
+        for file_path in glob.glob(os.path.join(PRO_DIR, prep_dir, "*.h5")): 
+            file_name = os.path.basename(file_path)        
+            print(file_name)
+            with pd.HDFStore(file_path) as hdf_input:  
+                file_index = 0
+                for df_features in hdf_input.select(tag + '/features', chunksize = chunk_size):
+                    try:
+                        target_path = os.path.join(PRO_DIR, set_dir,file_name[:-4]+'_{:d}.h5'.format(chunk_ind))
+                        hdf_target =  pd.HDFStore(target_path, complib='bzip2', complevel=9) 
+                        print('Target Path: ', target_path)    
+                        df_labels = hdf_input.select(tag + '/labels', start = file_index, stop = file_index + df_features.shape[0])
+                        # df_labels = df_labels.reset_index(level='index', drop=True)                                                
+                        # df_labels.set_index('index', range(0, chunk_size), append=True, inplace=True)                                                
+                        df_features.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(df_features.index, range(0, df_features.shape[0]))])
+                        df_labels.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(df_labels.index, range(0, df_labels.shape[0]))])
+                        file_index += df_features.shape[0]
+                        hdf_target.put(tag + '/features', df_features, append=True) 
+                        hdf_target.put(tag + '/labels', df_labels, append=True)                        
+                        hdf_target.flush()                        
+                        if hdf_target.get_storer(tag+'/features').nrows != hdf_target.get_storer(tag + '/labels').nrows:
+                            raise ValueError('DataSet: Sizes should match!')
+                        hdf_target.close()
+                        del df_labels
+                        del df_features                    
+                        chunk_ind += 1
+                    except Exception as e:
+                        if hdf_target.is_open(): hdf_target.close()
+    except Exception as e:        
+        print(e)                    
                        
-def get_h5_dataset(train_dir, valid_dir, test_dir, training_dict, train_period=[121, 279], valid_period=[280,285], test_period=[286, 304]):
+def get_h5_dataset(train_dir, valid_dir, test_dir, train_period=[121, 279], valid_period=[280,285], test_period=[286, 304]):
     train_path = os.path.join(PRO_DIR, train_dir)
     valid_path = os.path.join(PRO_DIR, valid_dir)
     test_path = os.path.join(PRO_DIR, test_dir)    
     DATA = data_classes.Dataset(train_path=train_path, valid_path=valid_path, test_path=test_path, 
-                                train_period=train_period, valid_period=valid_period, test_period=test_period, train_dict = training_dict)
+                                train_period=train_period, valid_period=valid_period, test_period=test_period)
         
     return DATA
 
@@ -800,11 +860,18 @@ def main(project_dir):
         - 
     """   
     logger.name ='__main__'     
-    logger.info('Retrieving DataFrame from Raw Data, Data Sampling')    
-    # allfeatures_preprocessing('chunks_all_c100th', 70, 10, 20, dividing='percentage', chunksize=500000, refNorm=True)        
+    logger.info('Retrieving DataFrame from Raw Data, Data Sampling')
+    
+#    startTime = datetime.now()
+#    allfeatures_preprocessing('chunks_all_c100th', [121, 279], [280,285], [286, 304], dividing='percentage', chunksize=500000, refNorm=True)        
+#    print('Preprocessing - Time: ', datetime.now() - startTime)
+    
     startTime = datetime.now()
-    get_other_set('chunks_all_c100th', 280, 285, 'validation_set') # from     
-    print('Extracting Process in Validation Set - Time: ', datetime.now() - startTime)
+#   get_other_set('chunks_all_c100th', 280, 285, 'validation_set') # from     
+    get_other_set('chunks_all_c100th', 'c100th_train_set', 'train', chunk_size=800000) # from    # chunks_all_800th 
+    get_other_set('chunks_all_c100th', 'c100th_valid_set', 'valid', chunk_size=300000) # from     
+    get_other_set('chunks_all_c100th', 'c100th_test_set', 'test', chunk_size=500000) # from         
+    print('Dividing .h5 files - Time: ', datetime.now() - startTime)
 
 
 

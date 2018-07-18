@@ -814,17 +814,19 @@ def acc_metrics_init(DATA):
     return epoch_metrics
 
 def batching_dataset(sess, writers, tag, DATA, FLAGS):
+
     if tag =='valid':
-        batch_num = math.ceil(np.float32(DATA.validation.num_examples / FLAGS.batch_size))
+        batch_num = DATA.validation.total_num_batch(FLAGS.batch_size) # math.ceil(np.float32(DATA.validation.num_examples / FLAGS.batch_size))
     else: #test
-        batch_num = math.ceil(np.float32(DATA.test.num_examples / FLAGS.batch_size))
+        batch_num = DATA.test.total_num_batch(FLAGS.batch_size) # math.ceil(np.float32(DATA.test.num_examples / FLAGS.batch_size))
+        
     metrics = acc_metrics_init(DATA)
     start_time = datetime.now()
     for batch_i in range(batch_num):
-        feed = create_feed_dict('valid', DATA, FLAGS)     
-        batch_metrics_valid = get_metrics(sess, feed)        
-        metrics = batch_stats(metrics, batch_metrics_valid) 
-        write_summaries(sess, writers, 'valid', batch_i, feed)
+        feed = create_feed_dict(tag, DATA, FLAGS)     
+        batch_metrics = get_metrics(sess, feed)        
+        metrics = batch_stats(metrics, batch_metrics) 
+        if tag == 'valid': write_summaries(sess, writers, tag, batch_i, feed)
     
     metrics = (metrics[0], metrics[1]/batch_num, metrics[2]/batch_num, metrics[3]/batch_num, 
                metrics[4]/batch_num, metrics[5]/batch_num, metrics[6]/batch_num)
@@ -836,15 +838,9 @@ def batching_dataset(sess, writers, tag, DATA, FLAGS):
 def batch_training(sess, writers, name, net_number, FLAGS, DATA):
     """Iterate over the dataset based on the number of epochs and train."""
 
-    def train_one_epoch(epoch, batch_size):
+    def train_one_epoch(epoch, batch_size, batch_num):
         print("Epoch: ", epoch)		
         
-        if FLAGS.max_epoch_size==-1:
-            batch_num = math.ceil(np.float32(DATA.train.num_examples / batch_size))        
-        elif (FLAGS.max_epoch_size > DATA.train.num_examples):
-            raise ValueError('ERROR: The max_epoch_size must not be greater than the train.num_examples')
-        else:
-            batch_num = math.ceil(np.float32( FLAGS.max_epoch_size / batch_size))
         epoch_metrics_train = acc_metrics_init(DATA)        
         start_time = datetime.now()
         for batch_i in range(batch_num):
@@ -852,7 +848,7 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
             print("batch Number: ", batch_i)
             batch_dict= create_feed_dict('batch', DATA, FLAGS)
             step = epoch * batch_num + batch_i    # total steps for all epochs        
-            if step > 0 and (step * batch_size) % (DATA.train.num_examples) < batch_size:                
+            if step > 0 and (step * batch_size) % (DATA.train.total_num_examples) < batch_size:                
                 # print ('(step * batch_size) % (DATA.train.num_examples): ', (step * batch_size) % (DATA.train.num_examples))
                 train_and_summarize(sess, writers, step, batch_dict)                
             else:                
@@ -867,6 +863,7 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
         
         print('Epoch Time: ', datetime.now() - start_time)        
         return epoch_metrics 
+
 
     return_epoch = 0
     try:
@@ -883,10 +880,18 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
         valid_history=[]            
         dtype = ['epoch','Loss','LogLoss','Accuracy','Better-Accuracy','M-Measure Mean','AUC_AOC Mean','AUC_PR Mean']
         checkpoint_file = os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number)) #'/model.ckpt' # os.path.join(FLAGS.logdir, 'model.ckpt')
+
+        if FLAGS.max_epoch_size==-1:
+            batch_num = math.ceil(np.float32(DATA.train.total_num_examples / FLAGS.batch_size))        
+        elif (FLAGS.max_epoch_size > DATA.train.total_num_examples):
+            raise ValueError('ERROR: The max_epoch_size must not be greater than the train.total_num_examples')
+        else:
+            batch_num = math.ceil(np.float32( FLAGS.max_epoch_size / FLAGS.batch_size))
+        
         for epoch in range(FLAGS.epoch_num):
 #            try:
             FLAGS.epoch_flag = epoch
-            epoch_metrics = train_one_epoch(epoch, FLAGS.batch_size)
+            epoch_metrics = train_one_epoch(epoch, FLAGS.batch_size, batch_num)
             bett_acc_train, m_mtx_mean_train, auc_aoc_mean_train, auc_pr_mean_train = print_stats(epoch_metrics, 'train')        
             # Validation set:                                
             valid_metrics = batching_dataset(sess, writers, 'valid', DATA, FLAGS)
@@ -1167,9 +1172,9 @@ def FLAGS_setting(FLAGS, flag_num):
     # section (published in 2014).
 
     # Hyperparameters
-    FLAGS.epoch_num = 50  # 14  # 17  # 35  # 15
+    FLAGS.epoch_num = 1  # 14  # 17  # 35  # 15
     #print("FLAGS.epoch_num", FLAGS.epoch_num)
-    FLAGS.batch_size = 4000  
+    FLAGS.batch_size = 1 # 4000  
     FLAGS.dropout_keep = 0.9  # 0.9  # 0.95  # .75  # .6
     # ### parameters for training optimizer.
     FLAGS.learning_rate = .1  # .075  # .15  # .25
@@ -1234,11 +1239,11 @@ def main(_):
     tf.gfile.MakeDirs(FLAGS.logdir)    
 
     conf_number = 1    
-    train_dir = 'chunks_all_c100th'
-    valid_dir = 'valid_set'
-    test_dir = 'chunks_all_c100th'
-    training_dict = md.get_dataset_metadata(train_dir)
-    DATA = md.get_h5_data(train_dir, valid_dir, test_dir, training_dict) 
+    train_dir = 'c100th_train_set' # 'train_set_800th'
+    valid_dir = 'c100th_valid_set' # chunks_all_800th 'valid_set_800th'
+    test_dir = 'c100th_test_set' # 'test_set_800th'
+    # training_dict = md.get_dataset_metadata(train_dir)
+    DATA = md.get_h5_data(train_dir, valid_dir, test_dir) 
     
 #    for file_path in glob.glob(os.path.join(PRO_DIR, subdir_name,"*.h5")):  
 #        file_name = os.path.basename(file_path)

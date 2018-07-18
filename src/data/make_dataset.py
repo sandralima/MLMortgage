@@ -20,17 +20,12 @@ def get_data(num_examples, valid_num, test_num, weight_flag=False, dataset_name=
     return data
 
 
-def get_h5_data(train_dir, valid_dir, test_dir, training_dict, train_period=[121, 279], valid_period=[280,285], test_period=[286, 304]):
+def get_h5_data(train_dir, valid_dir, test_dir, train_period=[121, 279], valid_period=[280,285], test_period=[286, 304]):
     try:              
-        return bd.get_h5_dataset(train_dir, valid_dir, test_dir, training_dict, train_period, valid_period, test_period)
+        return bd.get_h5_dataset(train_dir, valid_dir, test_dir, train_period, valid_period, test_period)
     except  Exception  as e:        
         raise ValueError('Error in retrieving the DATA object: ' + train_dir + ' , ' + valid_dir + ' , ' +  test_dir + ' ' + str(e))
 
-def get_dataset_metadata(set_dir):
-    try:              
-        return bd.get_dataset_metadata(set_dir)
-    except  Exception  as e:        
-        raise ValueError('Error in retrieving the METADATA object: ' + set_dir + ' ' + str(e))    
 
 def main(project_dir):
     """ Runs data processing scripts to turn raw data from (../raw) into

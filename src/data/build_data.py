@@ -585,7 +585,7 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_period, valid_p
     minmax_cols = np.delete(minmax_cols,to_delete, 0)            
     
     target_path = os.path.join(PRO_DIR, raw_dir,file_name[:-4])
-    with  pd.HDFStore(target_path +'-pp.h5', complib='bzip2', complevel=9) as hdf:
+    with  pd.HDFStore(target_path +'-pp.h5') as hdf: #, complib='bzip2', complevel=9
         gflag = ''    
         i = 1                  
         train_index = 0
@@ -862,16 +862,16 @@ def main(project_dir):
     logger.name ='__main__'     
     logger.info('Retrieving DataFrame from Raw Data, Data Sampling')
     
-#    startTime = datetime.now()
-#    allfeatures_preprocessing('chunks_all_c100th', [121, 279], [280,285], [286, 304], dividing='percentage', chunksize=500000, refNorm=True)        
-#    print('Preprocessing - Time: ', datetime.now() - startTime)
-    
     startTime = datetime.now()
+    allfeatures_preprocessing('chunks_all_c100th', [121, 279], [280,285], [286, 304], dividing='percentage', chunksize=500000, refNorm=True)        
+    print('Preprocessing - Time: ', datetime.now() - startTime)
+    
+#    startTime = datetime.now()
 #   get_other_set('chunks_all_c100th', 280, 285, 'validation_set') # from     
-    get_other_set('chunks_all_c100th', 'c100th_train_set', 'train', chunk_size=800000) # from    # chunks_all_800th 
-    get_other_set('chunks_all_c100th', 'c100th_valid_set', 'valid', chunk_size=300000) # from     
-    get_other_set('chunks_all_c100th', 'c100th_test_set', 'test', chunk_size=500000) # from         
-    print('Dividing .h5 files - Time: ', datetime.now() - startTime)
+#    get_other_set('chunks_all_c100th', 'c100th_train_set', 'train', chunk_size=4000) # from    # chunks_all_800th 
+    # get_other_set('chunks_all_c100th', 'c100th_valid_set', 'valid', chunk_size=300000) # from     
+    # get_other_set('chunks_all_c100th', 'c100th_test_set', 'test', chunk_size=500000) # from         
+#    print('Dividing .h5 files - Time: ', datetime.now() - startTime)
 
 
 

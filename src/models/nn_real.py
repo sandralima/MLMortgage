@@ -816,9 +816,9 @@ def acc_metrics_init(DATA):
 def batching_dataset(sess, writers, tag, DATA, FLAGS):
 
     if tag =='valid':
-        batch_num = DATA.validation.total_num_batch(FLAGS.batch_size) # math.ceil(np.float32(DATA.validation.num_examples / FLAGS.batch_size))
+        batch_num = DATA.validation.total_num_batch(FLAGS.valid_batch_size) # math.ceil(np.float32(DATA.validation.num_examples / FLAGS.batch_size))
     else: #test
-        batch_num = DATA.test.total_num_batch(FLAGS.batch_size) # math.ceil(np.float32(DATA.test.num_examples / FLAGS.batch_size))
+        batch_num = DATA.test.total_num_batch(FLAGS.test_batch_size) # math.ceil(np.float32(DATA.test.num_examples / FLAGS.batch_size))
         
     metrics = acc_metrics_init(DATA)
     start_time = datetime.now()
@@ -944,7 +944,9 @@ def print_stats(stats, name):
         
     conf_mtx, acc, auc_list, m_mtx_list, loss, log_loss, auc_pr_list = stats          
                
-    conf_mtx1 = conf_mtx / conf_mtx.sum(axis=1, keepdims=True)       
+    # conf_mtx1 = conf_mtx / conf_mtx.sum(axis=1, keepdims=True)       
+    cfsum = conf_mtx.sum(axis=1, keepdims=True)
+    conf_mtx1 = np.divide(conf_mtx, cfsum, out=np.zeros_like(conf_mtx), where=cfsum!=0)
     bett_acc = conf_mtx1.diagonal().mean()
     auc_aoc_mean = auc_list.mean()
     auc_pr_mean = auc_pr_list.mean()
@@ -1112,9 +1114,9 @@ def create_feed_dict(tag, DATA, FLAGS):
         targets = DATA.train.orig.labels
         example_weights = np.ones_like(targets.iloc[:, 1].values)
     elif tag == 'valid':
-        features, targets, example_weights = DATA.validation.next_sequential_batch(FLAGS.batch_size)
+        features, targets, example_weights = DATA.validation.next_sequential_batch(FLAGS.valid_batch_size)
     else:
-        features, targets, example_weights = DATA.test.next_sequential_batch(FLAGS.batch_size)
+        features, targets, example_weights = DATA.test.next_sequential_batch(FLAGS.test_batch_size)
 
     # features[:, :7] = targets
     if tag == 'batch':
@@ -1174,7 +1176,7 @@ def FLAGS_setting(FLAGS, flag_num):
     # Hyperparameters
     FLAGS.epoch_num = 1  # 14  # 17  # 35  # 15
     #print("FLAGS.epoch_num", FLAGS.epoch_num)
-    FLAGS.batch_size = 1 # 4000  
+    FLAGS.batch_size = 100 # 4000  
     FLAGS.dropout_keep = 0.9  # 0.9  # 0.95  # .75  # .6
     # ### parameters for training optimizer.
     FLAGS.learning_rate = .1  # .075  # .15  # .25
@@ -1204,7 +1206,9 @@ def FLAGS_setting(FLAGS, flag_num):
     FLAGS.s_hidden = [200, 140, 140]
     FLAGS.allow_summaries = False
     FLAGS.epoch_flag = 0
-    FLAGS.max_epoch_size = 30000
+    FLAGS.max_epoch_size = 300
+    FLAGS.valid_batch_size = 100000
+    FLAGS.test_batch_size = 100000
     
     if FLAGS.n_hidden < 0 : raise ValueError('The size of hidden layer must be at least 0')
     if (FLAGS.n_hidden > 0) and (FLAGS.n_hidden != len(FLAGS.s_hidden)) : raise ValueError('Sizes in hidden layers should match!')
@@ -1239,7 +1243,7 @@ def main(_):
     tf.gfile.MakeDirs(FLAGS.logdir)    
 
     conf_number = 1    
-    train_dir = 'c100th_train_set' # 'train_set_800th'
+    train_dir = 'c100th_train_set' # 'c100th_train_set' # 'train_set_800th'
     valid_dir = 'c100th_valid_set' # chunks_all_800th 'valid_set_800th'
     test_dir = 'c100th_test_set' # 'test_set_800th'
     # training_dict = md.get_dataset_metadata(train_dir)

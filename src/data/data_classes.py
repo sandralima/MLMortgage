@@ -41,6 +41,8 @@ class DataBatch(object):
             self.index_length = len(self.dataset.get_storer(self.dtype+'/features').attrs.data_columns)            
             self._num_columns = self.dataset.get_storer(self.dtype+ '/features').ncols - self.index_length
             self._num_classes = self.dataset.get_storer(self.dtype+'/labels').ncols - self.index_length   
+            self.features_list = self.dataset.get_storer(self.dtype+'/features').attrs.non_index_axes[0][1][self.index_length:]
+            self.labels_list = self.dataset.get_storer(self.dtype+'/labels').attrs.non_index_axes[0][1][self.index_length:]
             
             self._file_index = 0    
             # this is for testing and training sets:
@@ -57,7 +59,7 @@ class DataBatch(object):
                 dataset = pd.HDFStore(file_path) # the first file of the path
                 nrows = dataset.get_storer(self.dtype + '/features').nrows
                 files_dict[i] = {'path': file_path, 'nrows': nrows, 
-                          'initial_index': self._total_num_examples, 'end_index': self._total_num_examples + nrows}        
+                          'init_index': self._total_num_examples, 'end_index': self._total_num_examples + nrows}        
                 self._total_num_examples += nrows
                 if dataset.is_open: dataset.close()
             return files_dict        
@@ -142,10 +144,14 @@ class DataBatch(object):
             self._file_index = 0
             self.dataset_index += 1
             
-            if (self.dataset_index <len(self.all_files)):
-                self.dataset.close()
-                self.dataset = pd.HDFStore(self.all_files[self.dataset_index]) # the next file of the path
-                self._current_num_examples = self.dataset.get_storer(self.dtype+'/features').nrows
+            if (self.dataset_index >= len(self.all_files)):
+                self.dataset_index = 0
+            
+            self.dataset.close()
+            self.dataset = pd.HDFStore(self.all_files[self.dataset_index]) # the next file of the path
+            self._current_num_examples = self.dataset.get_storer(self.dtype+'/features').nrows
+            
+                
 
         return temp_features, temp_labels, np.array([1.0], dtype=np.dtype('float32'))  # temp_weights
 
@@ -204,43 +210,46 @@ class DataBatch(object):
         # all_files = glob.glob(os.path.join(self.h5_path, "*.h5"))        
         
         #period_range =  set(range(self.period_range[0], self.period_range[1]+1))            
-        features_list = self.dataset.get_storer(self.dtype+'/features').attrs.non_index_axes[0][1][self.index_length:]
-        temp_features = pd.DataFrame(None,columns=features_list)
-        labels_list = self.dataset.get_storer(self.dtype+'/labels').attrs.non_index_axes[0][1][self.index_length:]
-        temp_labels = pd.DataFrame(None,columns=labels_list)  
+        
+        temp_features = pd.DataFrame(None,columns=self.features_list)        
+        temp_labels = pd.DataFrame(None,columns=self.labels_list)  
         random_batch = np.array(list(self._loan_random.get_batch(batch_size)))
         startTime = datetime.now()       
-        partial_number = 0         
-        for file_path in self.all_files:
+        #partial_number = 0         
+        orb_size = 0
+        for k, v in self._dict.items():
             try:                
-                startTime1 = datetime.now()
+                startTime1 = datetime.now()                
                 if self.dataset.is_open: self.dataset.close()
-                self.dataset = pd.HDFStore(file_path) # the first file of the path
-                self._current_num_examples = self.dataset.get_storer(self.dtype + '/features').nrows
-                records_per_file = np.logical_and(random_batch>=partial_number, random_batch<(partial_number + self._current_num_examples))                        
-                #c = self.dataset.select_as_coordinates(self.dtype+ '/features', ['level_0<3'])
-                # df_features = self.dataset.select(self.dtype + '/features', where=random_batch[records_per_file])
-                # df_features = self.dataset[self.dtype +'features'].loc[(random_batch[records_per_file], slice(None), slice(None), slice(None)), :]
-                orb = np.sort(random_batch[records_per_file]) - partial_number
-                # idx = pd.IndexSlice
-                # df_features = self.dataset[self.dtype +'/features'].loc[idx[random_batch[records_per_file], :, :,:], :]
-                # self.dataset['train/features'].index.get_index_levels(0)
+                records_per_file = np.logical_and(random_batch>=v['init_index'], random_batch<(v['end_index']))                        
+                orb = np.sort(random_batch[records_per_file]) - v['init_index']                  
                 if (len(orb)>0):
-                    String_batch = ', '.join(map(str, orb))
-                    df_features = self.dataset.select(self.dtype + '/features', "level_0 in [" + String_batch + "]")
-                    df_labels = self.dataset.select(self.dtype + '/labels', "level_0 in [" + String_batch + "]")
-                    # df_labels = self.dataset.select(self.dtype+'/labels', where=random_batch[records_per_file])
+                    file_path = v['path']                    
+                    startTime2 = datetime.now()
+                    self.dataset = pd.HDFStore(file_path) # the first file of the path
+                    self._current_num_examples = self.dataset.get_storer(self.dtype + '/features').nrows
+                    # String_batch = ', '.join(map(str, orb))
+                    # df_features = self.dataset.select(self.dtype + '/features', "level_0 in [" + String_batch + "]")
+                    # df_labels = self.dataset.select(self.dtype + '/labels', "level_0 in [" + String_batch + "]")                    
+                    df_features = self.dataset.select(self.dtype+'/features', where=orb)
+                    df_labels = self.dataset.select(self.dtype+'/labels', where=orb)
+                    print('File: ', k, 'Time for one file lecture: ', datetime.now() - startTime2, ' records: ',  len(orb))
+                    
+                    startTime3 = datetime.now()
                     temp_features = pd.concat([temp_features, df_features], ignore_index=True, copy=False)
                     temp_labels = pd.concat([temp_labels, df_labels], ignore_index=True, copy=False)
-                partial_number = partial_number + self._current_num_examples
+                    print('File: ', k, 'Time for one file lecture: ', datetime.now() - startTime3, ' records: ',  len(orb))
+                    
+                    print('File: ', k, 'Time for one file lecture: ', datetime.now() - startTime1, ' records: ',  len(orb))            
+                    orb_size += len(orb)
+                #partial_number = partial_number + self._current_num_examples
             except Exception as e:
-                print('Invalid Range: ' + str(e))                        
-            print('Time for one file lecture: ', datetime.now() - startTime1)            
+                print('Invalid Range: ' + str(e))                                    
 
         permutation = np.random.permutation(temp_features.shape[0])
         temp_features = temp_features.iloc[permutation]
         temp_labels = temp_labels.iloc[permutation]
-        print('Time for Getting' + str(batch_size) +' random elements: ', datetime.now() - startTime)                    
+        print('Time for Getting ', orb_size, ' random elements: ', datetime.now() - startTime)                    
         return temp_features, temp_labels, np.array([1.0], dtype=np.dtype('float32'))  # temp_weights    
     
     
@@ -334,7 +343,7 @@ class DataBatch(object):
         """Get the number of examples in the dataset."""
         return self._num_columns
     
-    def __exit__(self, *args):
+    def __del__(self, *args):
         if self.dataset.is_open: self.dataset.close()
 
 class Data(object):

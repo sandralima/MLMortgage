@@ -54,13 +54,13 @@ class DataBatch(object):
     def get_metadata_dataset(self):
         try:                          
             files_dict = {}  
-            self._total_num_examples = 0
             for i, file_path in zip(range(len(self.all_files)), self.all_files):    
                 dataset = pd.HDFStore(file_path) # the first file of the path
                 nrows = dataset.get_storer(self.dtype + '/features').nrows
                 files_dict[i] = {'path': file_path, 'nrows': nrows, 
                           'init_index': self._total_num_examples, 'end_index': self._total_num_examples + nrows}        
                 self._total_num_examples += nrows
+                print('dict: ', files_dict[i], ' total rows: ', self._total_num_examples)
                 if dataset.is_open: dataset.close()
             return files_dict        
         except  Exception  as e:        
@@ -211,8 +211,10 @@ class DataBatch(object):
         
         #period_range =  set(range(self.period_range[0], self.period_range[1]+1))            
         
-        temp_features = pd.DataFrame(None,columns=self.features_list)        
-        temp_labels = pd.DataFrame(None,columns=self.labels_list)  
+        #temp_features = pd.DataFrame(None,columns=self.features_list)        
+        #temp_labels = pd.DataFrame(None,columns=self.labels_list)  
+        temp_features = np.empty((0,len(self.features_list)))
+        temp_labels = np.zeros((0,len(self.labels_list)))
         random_batch = np.array(list(self._loan_random.get_batch(batch_size)))
         startTime = datetime.now()       
         #partial_number = 0         
@@ -222,33 +224,43 @@ class DataBatch(object):
                 startTime1 = datetime.now()                
                 if self.dataset.is_open: self.dataset.close()
                 records_per_file = np.logical_and(random_batch>=v['init_index'], random_batch<(v['end_index']))                        
-                orb = np.sort(random_batch[records_per_file]) - v['init_index']                  
+                orb = np.sort(random_batch[records_per_file]) - v['init_index']      
+                # print('File: ', k, 'Time for random selection: ', datetime.now() - startTime1, ' records: ',  len(orb))
                 if (len(orb)>0):
                     file_path = v['path']                    
-                    startTime2 = datetime.now()
+                    #startTime2 = datetime.now()
                     self.dataset = pd.HDFStore(file_path) # the first file of the path
                     self._current_num_examples = self.dataset.get_storer(self.dtype + '/features').nrows
                     # String_batch = ', '.join(map(str, orb))
                     # df_features = self.dataset.select(self.dtype + '/features', "level_0 in [" + String_batch + "]")
                     # df_labels = self.dataset.select(self.dtype + '/labels', "level_0 in [" + String_batch + "]")                    
+                    #temp_features = np.concatenate((temp_features, self.dataset.select(self.dtype+'/features', where=orb).values)) #this way is heavy
+                    #temp_labels = np.concatenate((temp_labels, self.dataset.select(self.dtype+'/labels', where=orb).values))
+
                     df_features = self.dataset.select(self.dtype+'/features', where=orb)
                     df_labels = self.dataset.select(self.dtype+'/labels', where=orb)
-                    print('File: ', k, 'Time for one file lecture: ', datetime.now() - startTime2, ' records: ',  len(orb))
                     
-                    startTime3 = datetime.now()
-                    temp_features = pd.concat([temp_features, df_features], ignore_index=True, copy=False)
-                    temp_labels = pd.concat([temp_labels, df_labels], ignore_index=True, copy=False)
-                    print('File: ', k, 'Time for one file lecture: ', datetime.now() - startTime3, ' records: ',  len(orb))
+                    # df_features = pd.read_hdf(self.dataset, self.dtype+'/features', where=orb) # the same time as above
+                    # df_labels = pd.read_hdf(self.dataset, self.dtype+'/labels', where=orb)            
+
+                    #print('File: ', k, 'Time for one file lecture: ', datetime.now() - startTime2, ' records: ',  len(orb))
                     
-                    print('File: ', k, 'Time for one file lecture: ', datetime.now() - startTime1, ' records: ',  len(orb))            
+#                    startTime3 = datetime.now()
+                    temp_features = np.concatenate((temp_features, df_features.values))
+                    temp_labels = np.concatenate((temp_labels, df_labels.values))
+#                    print('File: ', k, 'Time for append: ', datetime.now() - startTime3, ' records: ',  len(orb))
+                    
+                    print('File: ', k, 'Time for one file lecture/append: ', datetime.now() - startTime1, ' records: ',  len(orb))            
                     orb_size += len(orb)
                 #partial_number = partial_number + self._current_num_examples
             except Exception as e:
                 print('Invalid Range: ' + str(e))                                    
 
-        permutation = np.random.permutation(temp_features.shape[0])
-        temp_features = temp_features.iloc[permutation]
-        temp_labels = temp_labels.iloc[permutation]
+        # permutation = np.random.permutation(temp_features.shape[0])
+        #temp_features = temp_features.iloc[permutation]
+        #temp_labels = temp_labels.iloc[permutation]
+        np.random.shuffle(temp_features)
+        np.random.shuffle(temp_labels)
         print('Time for Getting ', orb_size, ' random elements: ', datetime.now() - startTime)                    
         return temp_features, temp_labels, np.array([1.0], dtype=np.dtype('float32'))  # temp_weights    
     
@@ -345,6 +357,12 @@ class DataBatch(object):
     
     def __del__(self, *args):
         if self.dataset.is_open: self.dataset.close()
+        print('del: File Closed')
+
+    def __exit__(self, type, value, traceback): # __exit__(self, *args):
+        if self.dataset.is_open: self.dataset.close()
+        print('exit: File Closed')
+
 
 class Data(object):
     """ABC."""

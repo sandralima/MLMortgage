@@ -784,8 +784,9 @@ def run_model(comp_graph, name, net_number, FLAGS, DATA):
             end_time = datetime.now() - start_time
             print('Total Training Time for: ' + FLAGS.name, end_time)
         except Exception as inst:            
-            print(inst)
+            print('Exception on run_model: ', inst)
         finally:
+            print('Finally on run_model...')
             for mode in writers:
                 writers[mode].close()
             if FLAGS.test_flag:
@@ -798,7 +799,13 @@ def run_model(comp_graph, name, net_number, FLAGS, DATA):
                 else: 
                     dtype = ['NN_name', 'NN_Number','Total Epochs', 'Execute Epochs', 'Total Training Time', 'Loss','LogLoss','Accuracy','Better-Accuracy','M-Measure Mean','AUC_AOC Mean','AUC_PR Mean']
                 pd.DataFrame(data=[(name, net_number, FLAGS.epoch_num, return_epoch, end_time,test_metrics[4], test_metrics[5], test_metrics[1], bett_acc_test, m_mtx_mean_test, auc_aoc_mean_test, auc_pr_mean_test)], 
-                             columns=dtype, index=None).to_csv(test_file, index=False, mode='a')                
+                             columns=dtype, index=None).to_csv(test_file, index=False, mode='a')   
+                
+                # DATA.train.__exit__(dtype(inst), inst, inst.__traceback__)
+                DATA.train.__exit__(None, None, None)
+                DATA.validation.__exit__(None, None, None)
+                DATA.test.__exit__(None, None, None)
+
 
 
 def acc_metrics_init(DATA):    
@@ -839,29 +846,33 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
     """Iterate over the dataset based on the number of epochs and train."""
 
     def train_one_epoch(epoch, batch_size, batch_num):
-        print("Epoch: ", epoch)		
         
         epoch_metrics_train = acc_metrics_init(DATA)        
-        start_time = datetime.now()
-        for batch_i in range(batch_num):
-            batch_time = datetime.now()
-            print("batch Number: ", batch_i)
-            batch_dict= create_feed_dict('batch', DATA, FLAGS)
-            step = epoch * batch_num + batch_i    # total steps for all epochs        
-            if step > 0 and (step * batch_size) % (DATA.train.total_num_examples) < batch_size:                
-                # print ('(step * batch_size) % (DATA.train.num_examples): ', (step * batch_size) % (DATA.train.num_examples))
-                train_and_summarize(sess, writers, step, batch_dict)                
-            else:                
-                _ = sess.run(['train'], feed_dict=batch_dict)                
-                
-            batch_metrics_train = get_metrics(sess, batch_dict)        
-            epoch_metrics_train = batch_stats(epoch_metrics_train, batch_metrics_train)             
-            print('Batch Time: ', datetime.now() - batch_time)            
-        
-        epoch_metrics = (epoch_metrics_train[0], epoch_metrics_train[1]/batch_num, epoch_metrics_train[2]/batch_num, epoch_metrics_train[3]/batch_num, 
-                         epoch_metrics_train[4]/batch_num, epoch_metrics_train[5]/batch_num, epoch_metrics_train[6]/batch_num)
-        
-        print('Epoch Time: ', datetime.now() - start_time)        
+        try:
+            print("Epoch: ", epoch)		
+            start_time = datetime.now()
+            for batch_i in range(batch_num):
+                batch_time = datetime.now()
+                print("batch Number: ", batch_i)
+                batch_dict= create_feed_dict('batch', DATA, FLAGS)
+                step = epoch * batch_num + batch_i    # total steps for all epochs        
+                if step > 0 and (step * batch_size) % (DATA.train.total_num_examples) < batch_size:                
+                    # print ('(step * batch_size) % (DATA.train.num_examples): ', (step * batch_size) % (DATA.train.num_examples))
+                    train_and_summarize(sess, writers, step, batch_dict)                
+                else:                
+                    _ = sess.run(['train'], feed_dict=batch_dict)                
+                    
+                batch_metrics_train = get_metrics(sess, batch_dict)        
+                epoch_metrics_train = batch_stats(epoch_metrics_train, batch_metrics_train)             
+                print('Batch Time: ', datetime.now() - batch_time)            
+        except Exception as e:
+            print('Exception on train_one_epoch', e)
+            raise ValueError(e)
+        finally:  
+            epoch_metrics = (epoch_metrics_train[0], epoch_metrics_train[1]/batch_num, epoch_metrics_train[2]/batch_num, epoch_metrics_train[3]/batch_num, 
+                             epoch_metrics_train[4]/batch_num, epoch_metrics_train[5]/batch_num, epoch_metrics_train[6]/batch_num)            
+            print('Epoch Time: ', datetime.now() - start_time)        
+            
         return epoch_metrics 
 
 
@@ -919,7 +930,12 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
 #            finally:
 #                pd.DataFrame(data=train_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_train_history.csv"), index=False)
 #                pd.DataFrame(data=valid_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_valid_history.csv"), index=False)                        
+    except Exception as inst:                    
+        print('Exception on batch_training', inst)
+        raise ValueError(inst)        
+
     finally:
+        print('batch_training finally instance!')
         if return_epoch == 0: return_epoch = FLAGS.epoch_num    
         pd.DataFrame(data=train_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_train_history.csv"), index=False)
         pd.DataFrame(data=valid_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_valid_history.csv"), index=False)
@@ -1176,7 +1192,7 @@ def FLAGS_setting(FLAGS, flag_num):
     # Hyperparameters
     FLAGS.epoch_num = 1  # 14  # 17  # 35  # 15
     #print("FLAGS.epoch_num", FLAGS.epoch_num)
-    FLAGS.batch_size = 100 # 4000  
+    FLAGS.batch_size = 1500 # 4000  
     FLAGS.dropout_keep = 0.9  # 0.9  # 0.95  # .75  # .6
     # ### parameters for training optimizer.
     FLAGS.learning_rate = .1  # .075  # .15  # .25
@@ -1206,7 +1222,9 @@ def FLAGS_setting(FLAGS, flag_num):
     FLAGS.s_hidden = [200, 140, 140]
     FLAGS.allow_summaries = False
     FLAGS.epoch_flag = 0
-    FLAGS.max_epoch_size = 300
+    
+    FLAGS.max_epoch_size = 4500
+    
     FLAGS.valid_batch_size = 100000
     FLAGS.test_batch_size = 100000
     
@@ -1243,7 +1261,7 @@ def main(_):
     tf.gfile.MakeDirs(FLAGS.logdir)    
 
     conf_number = 1    
-    train_dir = 'c100th_train_set' # 'c100th_train_set' # 'train_set_800th'
+    train_dir = 'chunks_all_c1millx3' # 'c100th_train_set' # 'train_set_800th'
     valid_dir = 'c100th_valid_set' # chunks_all_800th 'valid_set_800th'
     test_dir = 'c100th_test_set' # 'test_set_800th'
     # training_dict = md.get_dataset_metadata(train_dir)

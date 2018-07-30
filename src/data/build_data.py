@@ -476,8 +476,15 @@ def imputing_nan_values(nan_dict, distribution):
             
     return new_dict
 
+def splitDataFrameIntoSmaller(df, chunkSize = 1200): 
+    listOfDf = list()     
+    numberChunks = math.ceil(len(df) / chunkSize)        
+    for i in range(numberChunks):
+        listOfDf.append(df[i*chunkSize:(i+1)*chunkSize])
+    return listOfDf
+
 def allfeatures_prepro_file(file_path, raw_dir, file_name, train_period, valid_period, test_period, dividing='percentage', chunksize=500000, 
-                            refNorm=True, label='DELINQUENCY_STATUS_NEXT'):
+                            refNorm=True, label='DELINQUENCY_STATUS_NEXT', with_index=True):
     descriptive_cols = [
 #        'LOAN_ID',
         'ASOFMONTH',        
@@ -574,10 +581,7 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_period, valid_p
     ncols = [x for x in numeric_cols if x.find('NAN')<0]
     robust_cols, robust_normalizer = custom_robust_normalizer(ncols, dist_file, center_value='quantile', normalizer_type='percentile_scaler')    
     minmax_cols, minmax_normalizer = custom_minmax_normalizer(ncols, robust_normalizer.scale_, dist_file)            
-    # robust_normalizer.scale_ = np.delete(robust_normalizer.scale_,to_delete, 0)
-    # robust_normalizer.center_ = np.delete(robust_normalizer.center_,to_delete, 0)
-    # robust_cols = np.delete(robust_cols,to_delete, 0)            
-    
+   
     inters = set(robust_cols).intersection(minmax_cols)
     to_delete = [i for x,i in zip(minmax_cols,range(len(minmax_cols))) if x in inters]
     minmax_normalizer.scale_ = np.delete(minmax_normalizer.scale_,to_delete, 0)
@@ -585,7 +589,7 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_period, valid_p
     minmax_cols = np.delete(minmax_cols,to_delete, 0)            
     
     target_path = os.path.join(PRO_DIR, raw_dir,file_name[:-4])
-    with  pd.HDFStore(target_path +'-pp.h5', complib='lzo', complevel=9) as hdf: #
+    with  pd.HDFStore(target_path +'-pp.h5', complib='bzip2', complevel=9) as hdf: #
         gflag = ''    
         i = 1                  
         train_index = 0
@@ -616,64 +620,80 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_period, valid_p
             allfeatures_drop_cols(chunk, cat_list)
 
             chunk.reset_index(drop=True, inplace=True)  
-            # p_chunk = p_chunk.reindex('index', range(train_index, train_index + p_chunk.shape[0]))
             chunk.set_index(['LOAN_ID', 'DELINQUENCY_STATUS_NEXT', 'PERIOD'], append=True, inplace=True) #4 indexes
             
             if chunk.isnull().any().any(): raise ValueError('There are null values...File: ' + file_name)   
                     
             
-#            for _ in range(4):
-#                chunk = chunk.sample(frac=1, axis=0, replace=False)    
-#            logger.info('sampled data shuffling with non replacement by 4 times')                  
-            
-            # chunk = chunk.reset_index(drop=True)                           
             if (refNorm==True):            
                 chunk[robust_cols] = robust_normalizer.transform(chunk[robust_cols])
                 chunk[minmax_cols] = minmax_normalizer.transform(chunk[minmax_cols])            
                 
             if chunk.isnull().any().any(): raise ValueError('There are null values...File: ' + file_name)   
             
-            # this sintax works only with arrays, not with slicing:
-            # myselect = chunk.loc[(slice(None), slice(None), slice(None), [121,122]), :]
-            # another method:
-            # idx = pd.IndexSlice
-            # chunk3 = chunk.loc[idx[:, :, :, [121, 122]], :] #with arrays too!!!            
             chunk_periods = set(list(chunk.index.get_level_values('PERIOD')))
             
             inter_periods = list(chunk_periods.intersection(set(range(train_period[0], train_period[1]+1))))            
             p_chunk = chunk.loc[(slice(None), slice(None), slice(None), inter_periods), :]
-            # p_chunk.index = p_chunk.index.set_levels(range(train_index, train_index + p_chunk.shape[0]), level=0)
-            p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(train_index, train_index + p_chunk.shape[0]))])
-            labels = allfeatures_extract_labels(p_chunk, columns=label)            
-            hdf.put('train/features', p_chunk, append=True)
-            hdf.put('train/labels', labels, append=True)                        
-            train_index += p_chunk.shape[0]
-
-            
+            if (with_index==True):
+                p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(train_index, train_index + p_chunk.shape[0]))])
+                labels = allfeatures_extract_labels(p_chunk, columns=label)            
+                hdf.put('train/features', p_chunk, append=True)
+                hdf.put('train/labels', labels, append=True)                        
+                train_index += p_chunk.shape[0]
+            else:
+                p_chunk.reset_index(drop=True, inplace=True)
+                labels = allfeatures_extract_labels(p_chunk, columns=label)
+                
+                pc_subframes = splitDataFrameIntoSmaller(p_chunk, chunkSize = 1200)
+                for sf in pc_subframes:
+                    hdf.put('train/features', sf, append=True)
+                    
+                lb_subframes = splitDataFrameIntoSmaller(labels, chunkSize = 1200)
+                for sf in lb_subframes:
+                    hdf.put('train/labels', sf, append=True)
+                
             inter_periods = list(chunk_periods.intersection(set(range(valid_period[0], valid_period[1]+1))))
             p_chunk = chunk.loc[(slice(None), slice(None), slice(None), inter_periods), :]
-#            p_chunk = p_chunk.reset_index(drop=True)
-#            p_chunk = p_chunk.reindex(range(valid_index, valid_index + p_chunk.shape[0]))
-#            p_chunk.set_index(['LOAN_ID', 'DELINQUENCY_STATUS_NEXT', 'PERIOD'], append=True, inplace=True)
-            p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(valid_index, valid_index + p_chunk.shape[0]))])
-            labels = allfeatures_extract_labels(p_chunk, columns=label)                        
-            hdf.put('valid/features', p_chunk, append=True)
-            hdf.put('valid/labels', labels, append=True) 
-            valid_index += p_chunk.shape[0]                                   
+            if (with_index==True):
+                p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(valid_index, valid_index + p_chunk.shape[0]))])
+                labels = allfeatures_extract_labels(p_chunk, columns=label)                        
+                hdf.put('valid/features', p_chunk, append=True)
+                hdf.put('valid/labels', labels, append=True) 
+                valid_index += p_chunk.shape[0]                                  
+            else:
+                p_chunk.reset_index(drop=True, inplace=True)
+                labels = allfeatures_extract_labels(p_chunk, columns=label)
+                
+                pc_subframes = splitDataFrameIntoSmaller(p_chunk, chunkSize = 1200)
+                for sf in pc_subframes:
+                    hdf.put('valid/features', sf, append=True)
+                    
+                lb_subframes = splitDataFrameIntoSmaller(labels, chunkSize = 1200)
+                for sf in lb_subframes:
+                    hdf.put('valid/labels', sf, append=True)
+                    
             
             inter_periods = list(chunk_periods.intersection(set(range(test_period[0], test_period[1]+1))))
             p_chunk = chunk.loc[(slice(None), slice(None), slice(None), inter_periods), :]
-#            p_chunk = p_chunk.reset_index(drop=True)
-#            p_chunk = p_chunk.reindex(range(test_index, test_index + p_chunk.shape[0]))
-#            p_chunk.set_index(['LOAN_ID', 'DELINQUENCY_STATUS_NEXT', 'PERIOD'], append=True, inplace=True)
-            p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(test_index, test_index + p_chunk.shape[0]))])
-            labels = allfeatures_extract_labels(p_chunk, columns=label)            
-            hdf.put('test/features', p_chunk, append=True)
-            hdf.put('test/labels', labels, append=True)                        
-            test_index += p_chunk.shape[0]                                    
-#            hdf.put('features', chunk, append=True) 
-#            hdf.put('labels', labels, append=True) 
-            # num_columns = len(chunk.columns.values)
+            if (with_index==True):
+                p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(test_index, test_index + p_chunk.shape[0]))])
+                labels = allfeatures_extract_labels(p_chunk, columns=label)            
+                hdf.put('test/features', p_chunk, append=True)
+                hdf.put('test/labels', labels, append=True)                        
+                test_index += p_chunk.shape[0]                                    
+            else:
+                p_chunk.reset_index(drop=True, inplace=True)
+                labels = allfeatures_extract_labels(p_chunk, columns=label)
+                
+                pc_subframes = splitDataFrameIntoSmaller(p_chunk, chunkSize = 1200)
+                for sf in pc_subframes:
+                    hdf.put('test/features', sf, append=True)
+                    
+                lb_subframes = splitDataFrameIntoSmaller(labels, chunkSize = 1200)
+                for sf in lb_subframes:
+                    hdf.put('test/labels', sf, append=True)
+                
             hdf.flush()
             del chunk
             del labels
@@ -818,7 +838,7 @@ def slice_table_sets(prep_dir, set_dir, tag, target_name, chunk_size=400000):
         chunk_ind = 0        
         total_rows = 0
         target_path = os.path.join(PRO_DIR, set_dir,target_name+'_{:d}.h5'.format(chunk_ind))
-        hdf_target =  pd.HDFStore(target_path, complib='lzo', complevel=9)         
+        hdf_target =  pd.HDFStore(target_path, complib='bzip2', complevel=9)         
         print('Target Path: ', target_path)
         all_files = glob.glob(os.path.join(PRO_DIR, prep_dir, "*.h5"))
         for i, file_path in enumerate(all_files): 
@@ -847,7 +867,7 @@ def slice_table_sets(prep_dir, set_dir, tag, target_name, chunk_size=400000):
                             chunk_ind += 1
                             if ((i<len(all_files)) or (i+1==len(all_files) and df_features.shape[0]>=500000)):
                                 target_path = os.path.join(PRO_DIR, set_dir,target_name+'_{:d}.h5'.format(chunk_ind))
-                                hdf_target =  pd.HDFStore(target_path, complib='lzo', complevel=9)
+                                hdf_target =  pd.HDFStore(target_path, complib='bzip2', complevel=9)
                                 print('Target Path: ', target_path)                                                    
                         del df_labels
                         del df_features                                            
@@ -920,7 +940,7 @@ def main(project_dir):
 #    startTime = datetime.now()
 #   get_other_set('chunks_all_c100th', 280, 285, 'validation_set') # from     
 #    slice_fixed_sets('chunks_all_c1millx3', 'train_set_1millx70th', 'train', chunk_size=70000) # from    # chunks_all_800th 
-    #slice_table_sets('chunks_all_c1millx3', 'train_set_1millx30mill', 'train', 'c1millx30mill', chunk_size=30000000)
+#    slice_table_sets('chunks_all_c1millx3', 'train_set_1millx30mill', 'train', 'c1millx30mill', chunk_size=30000000)
     # get_other_set('chunks_all_c100th', 'c100th_valid_set', 'valid', chunk_size=300000) # from     
     # get_other_set('chunks_all_c100th', 'c100th_test_set', 'test', chunk_size=500000) # from         
 #    print('Dividing .h5 files - Time: ', datetime.now() - startTime)

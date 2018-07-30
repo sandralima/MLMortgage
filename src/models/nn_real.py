@@ -1190,9 +1190,9 @@ def FLAGS_setting(FLAGS, flag_num):
     # section (published in 2014).
 
     # Hyperparameters
-    FLAGS.epoch_num = 1  # 14  # 17  # 35  # 15
+    FLAGS.epoch_num = 3  # 14  # 17  # 35  # 15
     #print("FLAGS.epoch_num", FLAGS.epoch_num)
-    FLAGS.batch_size = 1500 # 4000  
+    FLAGS.batch_size = 4425 # 4000  
     FLAGS.dropout_keep = 0.9  # 0.9  # 0.95  # .75  # .6
     # ### parameters for training optimizer.
     FLAGS.learning_rate = .1  # .075  # .15  # .25
@@ -1223,7 +1223,7 @@ def FLAGS_setting(FLAGS, flag_num):
     FLAGS.allow_summaries = False
     FLAGS.epoch_flag = 0
     
-    FLAGS.max_epoch_size = 4500
+    FLAGS.max_epoch_size = 4425
     
     FLAGS.valid_batch_size = 100000
     FLAGS.test_batch_size = 100000

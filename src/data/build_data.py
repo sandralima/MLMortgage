@@ -585,7 +585,7 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_period, valid_p
     minmax_cols = np.delete(minmax_cols,to_delete, 0)            
     
     target_path = os.path.join(PRO_DIR, raw_dir,file_name[:-4])
-    with  pd.HDFStore(target_path +'-pp.h5', complib='bzip2', complevel=9) as hdf: #
+    with  pd.HDFStore(target_path +'-pp.h5', complib='lzo', complevel=9) as hdf: #
         gflag = ''    
         i = 1                  
         train_index = 0
@@ -776,7 +776,7 @@ def get_other_set(prep_dir, init_period, end_period, set_dir, chunk_size=8000000
     except Exception as e:        
         print(e)        
 
-def get_other_set(prep_dir, set_dir, tag, chunk_size=400000):
+def slice_fixed_sets(prep_dir, set_dir, tag, chunk_size=400000):
     
     pd.set_option('io.hdf.default_format','fixed') #'table')
     try:
@@ -800,7 +800,7 @@ def get_other_set(prep_dir, set_dir, tag, chunk_size=400000):
                         hdf_target.put(tag + '/features', df_features) 
                         hdf_target.put(tag + '/labels', df_labels)                        
                         hdf_target.flush()                        
-                        if hdf_target.get_storer(tag+'/features').nrows != hdf_target.get_storer(tag + '/labels').nrows:
+                        if hdf_target.get_storer(tag+'/features').shape[0] != hdf_target.get_storer(tag + '/labels').shape[0]:
                             raise ValueError('DataSet: Sizes should match!')
                         hdf_target.close()
                         del df_labels
@@ -810,6 +810,54 @@ def get_other_set(prep_dir, set_dir, tag, chunk_size=400000):
                         if hdf_target.is_open(): hdf_target.close()
     except Exception as e:        
         print(e)                    
+
+def slice_table_sets(prep_dir, set_dir, tag, target_name, chunk_size=400000):
+    
+    pd.set_option('io.hdf.default_format', 'table')
+    try:
+        chunk_ind = 0        
+        total_rows = 0
+        target_path = os.path.join(PRO_DIR, set_dir,target_name+'_{:d}.h5'.format(chunk_ind))
+        hdf_target =  pd.HDFStore(target_path, complib='lzo', complevel=9)         
+        print('Target Path: ', target_path)
+        all_files = glob.glob(os.path.join(PRO_DIR, prep_dir, "*.h5"))
+        for i, file_path in enumerate(all_files): 
+            file_name = os.path.basename(file_path)        
+            print(file_name)
+            with pd.HDFStore(file_path) as hdf_input:  
+                file_index = 0
+                for df_features in hdf_input.select(tag + '/features', chunksize = 500000):
+                    try:                            
+                        df_labels = hdf_input.select(tag + '/labels', start = file_index, stop = file_index + df_features.shape[0])
+                        # df_labels = df_labels.reset_index(level='index', drop=True)                                                
+                        # df_labels.set_index('index', range(0, chunk_size), append=True, inplace=True)                                                
+                        df_features.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(df_features.index, range(0, df_features.shape[0]))])
+                        df_labels.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(df_labels.index, range(0, df_labels.shape[0]))])
+                        file_index += df_features.shape[0]
+                        hdf_target.put(tag + '/features', df_features, append=True) 
+                        hdf_target.put(tag + '/labels', df_labels, append=True)                        
+                        hdf_target.flush()      
+                        total_rows += df_features.shape[0]
+                        print('total_rows: ', total_rows)
+                        if (total_rows >= chunk_size):
+                            if hdf_target.get_storer(tag+'/features').nrows != hdf_target.get_storer(tag + '/labels').nrows:
+                                raise ValueError('DataSet: Sizes should match!')
+                            hdf_target.close()
+                            total_rows = 0
+                            chunk_ind += 1
+                            if ((i<len(all_files)) or (i+1==len(all_files) and df_features.shape[0]>=500000)):
+                                target_path = os.path.join(PRO_DIR, set_dir,target_name+'_{:d}.h5'.format(chunk_ind))
+                                hdf_target =  pd.HDFStore(target_path, complib='lzo', complevel=9)
+                                print('Target Path: ', target_path)                                                    
+                        del df_labels
+                        del df_features                                            
+                    except Exception as e:
+                        if hdf_target.is_open(): hdf_target.close()
+        
+        if hdf_target.is_open(): hdf_target.close()
+    except Exception as e:        
+        hdf_target.close()
+        print(e)
                        
 def get_h5_dataset(train_dir, valid_dir, test_dir, train_period=[121, 279], valid_period=[280,285], test_period=[286, 304]):
     train_path = os.path.join(PRO_DIR, train_dir)
@@ -865,16 +913,17 @@ def main(project_dir):
     logger.name ='__main__'     
     logger.info('Retrieving DataFrame from Raw Data, Data Sampling')
     
-#    startTime = datetime.now()
-#    allfeatures_preprocessing('chunks_all_c1mill', [121, 279], [280,285], [286, 304], dividing='percentage', chunksize=500000, refNorm=True)        
-#    print('Preprocessing - Time: ', datetime.now() - startTime)
-    
     startTime = datetime.now()
+    allfeatures_preprocessing('chunks_all_c1mill', [121, 279], [280,285], [286, 304], dividing='percentage', chunksize=500000, refNorm=True)        
+    print('Preprocessing - Time: ', datetime.now() - startTime)
+    
+#    startTime = datetime.now()
 #   get_other_set('chunks_all_c100th', 280, 285, 'validation_set') # from     
-    get_other_set('train_set_6mill', 'train_set_6millxc3mill', 'train', chunk_size=3000000) # from    # chunks_all_800th 
+#    slice_fixed_sets('chunks_all_c1millx3', 'train_set_1millx70th', 'train', chunk_size=70000) # from    # chunks_all_800th 
+    #slice_table_sets('chunks_all_c1millx3', 'train_set_1millx30mill', 'train', 'c1millx30mill', chunk_size=30000000)
     # get_other_set('chunks_all_c100th', 'c100th_valid_set', 'valid', chunk_size=300000) # from     
     # get_other_set('chunks_all_c100th', 'c100th_test_set', 'test', chunk_size=500000) # from         
-    print('Dividing .h5 files - Time: ', datetime.now() - startTime)
+#    print('Dividing .h5 files - Time: ', datetime.now() - startTime)
 
 
 

@@ -29,7 +29,7 @@ class DataBatch(object):
             self.all_files = glob.glob(os.path.join(self.h5_path, "*.h5"))                                    
             
             if dtype == 'train':                
-                self._dict = self.get_metadata_dataset_repeats(89)
+                self._dict = self.get_metadata_dataset_repeats(44)
                 self._loan_random = rp.CustomRandom(self._total_num_examples) # np.random.RandomState(RANDOM_SEED)                
             else:
                 self._dict = self.get_metadata_dataset()
@@ -241,7 +241,9 @@ class DataBatch(object):
         for k, v in self._dict.items():
             try:                
                 startTime1 = datetime.now()                
-                if self.dataset.is_open: self.dataset.close()
+                if self.dataset.is_open: 
+                    self.dataset.close()
+                    # gc.collect()
                 records_per_file = np.logical_and(random_batch>=v['init_index'], random_batch<(v['end_index']))                        
                 orb = np.sort(random_batch[records_per_file]) - v['init_index']      
                 # print('File: ', k, 'Time for random selection: ', datetime.now() - startTime1, ' records: ',  len(orb))

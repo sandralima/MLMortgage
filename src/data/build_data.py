@@ -18,6 +18,7 @@ from os.path import abspath
 from pathlib import Path
 from inspect import getsourcefile
 from datetime import datetime
+import math
 
 
 from sklearn.preprocessing import QuantileTransformer
@@ -588,15 +589,18 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_period, valid_p
     minmax_normalizer.center_ = np.delete(minmax_normalizer.center_,to_delete, 0)
     minmax_cols = np.delete(minmax_cols,to_delete, 0)            
     
-    target_path = os.path.join(PRO_DIR, raw_dir,file_name[:-4])
-    with  pd.HDFStore(target_path +'-pp.h5', complib='bzip2', complevel=9) as hdf: #
+    if with_index==True:
+        target_path = os.path.join(PRO_DIR, raw_dir,file_name[:-4])
+    else:
+        target_path = os.path.join(PRO_DIR, raw_dir,file_name[:-4]+'_non_index')
+    with  pd.HDFStore(target_path +'-pp.h5', complib='lzo', complevel=9) as hdf: #
         gflag = ''    
         i = 1                  
         train_index = 0
         valid_index = 0
         test_index = 0
         for chunk in pd.read_csv(file_path, chunksize = chunksize, sep=',', low_memory=False):    
-            print('chunk: ', i)
+            print('chunk: ', i, ' chunk size: ', chunk.shape[0])
             chunk.columns = chunk.columns.str.upper()                            
             
             chunk.drop(chunk.index[chunk[label].isnull()], axis=0, inplace=True)
@@ -637,18 +641,17 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_period, valid_p
             p_chunk = chunk.loc[(slice(None), slice(None), slice(None), inter_periods), :]
             if (with_index==True):
                 p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(train_index, train_index + p_chunk.shape[0]))])
-                labels = allfeatures_extract_labels(p_chunk, columns=label)            
+                # p_chunk.reset_index(drop=True, inplace=True)
+                labels = allfeatures_extract_labels(p_chunk, columns=label)
                 hdf.put('train/features', p_chunk, append=True)
-                hdf.put('train/labels', labels, append=True)                        
+                hdf.put('train/labels', labels, append=True)         
                 train_index += p_chunk.shape[0]
             else:
                 p_chunk.reset_index(drop=True, inplace=True)
-                labels = allfeatures_extract_labels(p_chunk, columns=label)
-                
+                labels = allfeatures_extract_labels(p_chunk, columns=label)                
                 pc_subframes = splitDataFrameIntoSmaller(p_chunk, chunkSize = 1200)
                 for sf in pc_subframes:
-                    hdf.put('train/features', sf, append=True)
-                    
+                    hdf.put('train/features', sf, append=True)                    
                 lb_subframes = splitDataFrameIntoSmaller(labels, chunkSize = 1200)
                 for sf in lb_subframes:
                     hdf.put('train/labels', sf, append=True)
@@ -664,11 +667,9 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_period, valid_p
             else:
                 p_chunk.reset_index(drop=True, inplace=True)
                 labels = allfeatures_extract_labels(p_chunk, columns=label)
-                
                 pc_subframes = splitDataFrameIntoSmaller(p_chunk, chunkSize = 1200)
                 for sf in pc_subframes:
-                    hdf.put('valid/features', sf, append=True)
-                    
+                    hdf.put('valid/features', sf, append=True)                    
                 lb_subframes = splitDataFrameIntoSmaller(labels, chunkSize = 1200)
                 for sf in lb_subframes:
                     hdf.put('valid/labels', sf, append=True)
@@ -684,12 +685,10 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_period, valid_p
                 test_index += p_chunk.shape[0]                                    
             else:
                 p_chunk.reset_index(drop=True, inplace=True)
-                labels = allfeatures_extract_labels(p_chunk, columns=label)
-                
+                labels = allfeatures_extract_labels(p_chunk, columns=label)                
                 pc_subframes = splitDataFrameIntoSmaller(p_chunk, chunkSize = 1200)
                 for sf in pc_subframes:
-                    hdf.put('test/features', sf, append=True)
-                    
+                    hdf.put('test/features', sf, append=True)                    
                 lb_subframes = splitDataFrameIntoSmaller(labels, chunkSize = 1200)
                 for sf in lb_subframes:
                     hdf.put('test/labels', sf, append=True)
@@ -752,7 +751,7 @@ def get_other_set_slice(prep_dir, init_period, end_period, set_dir, file_name, c
                             target_path = os.path.join(PRO_DIR, set_dir,file_name+'_{:d}.h5'.format(chunk_ind))
                             hdf_target =  pd.HDFStore(target_path) 
                             print('Target Path: ', target_path)                        
-        if hdf_target.is_open(): hdf_target.close()
+        if hdf_target.is_open: hdf_target.close()
     except Exception as e:
         hdf_target.close()
         print(e)        
@@ -792,7 +791,7 @@ def get_other_set(prep_dir, init_period, end_period, set_dir, chunk_size=8000000
                         del df_features                    
                         chunk_ind += 1
                     except Exception as e:
-                        if hdf_target.is_open(): hdf_target.close()
+                        if hdf_target.is_open: hdf_target.close()
     except Exception as e:        
         print(e)        
 
@@ -809,7 +808,7 @@ def slice_fixed_sets(prep_dir, set_dir, tag, chunk_size=400000):
                 for df_features in hdf_input.select(tag + '/features', chunksize = chunk_size):
                     try:
                         target_path = os.path.join(PRO_DIR, set_dir,file_name[:-4]+'_{:d}.h5'.format(chunk_ind))
-                        hdf_target =  pd.HDFStore(target_path, complib='bzip2', complevel=9, chunkshape='auto') 
+                        hdf_target =  pd.HDFStore(target_path, complib='lzo', complevel=9, chunkshape='auto') 
                         print('Target Path: ', target_path)    
                         df_labels = hdf_input.select(tag + '/labels', start = file_index, stop = file_index + df_features.shape[0])
                         # df_labels = df_labels.reset_index(level='index', drop=True)                                                
@@ -827,56 +826,69 @@ def slice_fixed_sets(prep_dir, set_dir, tag, chunk_size=400000):
                         del df_features                    
                         chunk_ind += 1
                     except Exception as e:
-                        if hdf_target.is_open(): hdf_target.close()
+                        if hdf_target.is_open: hdf_target.close()
     except Exception as e:        
         print(e)                    
 
-def slice_table_sets(prep_dir, set_dir, tag, target_name, chunk_size=400000):
+def slice_table_sets(prep_dir, set_dir, tag, target_name, input_chunk_size=1200, target_size = 70000, with_index=True):
     
     pd.set_option('io.hdf.default_format', 'table')
-    try:
-        chunk_ind = 0        
-        total_rows = 0
+    all_files = glob.glob(os.path.join(PRO_DIR, prep_dir, "*.h5"))        
+    chunk_ind = 0      
+    if (with_index==True):      
         target_path = os.path.join(PRO_DIR, set_dir,target_name+'_{:d}.h5'.format(chunk_ind))
-        hdf_target =  pd.HDFStore(target_path, complib='bzip2', complevel=9)         
-        print('Target Path: ', target_path)
-        all_files = glob.glob(os.path.join(PRO_DIR, prep_dir, "*.h5"))
+    else:
+        target_path = os.path.join(PRO_DIR, set_dir,target_name+'_non_index_{:d}.h5'.format(chunk_ind))
+        
+    hdf_target =  pd.HDFStore(target_path, complib='lzo', complevel=9)         
+    print('Target Path: ', target_path)
+    try:        
+        total_rows = 0                
+        target_index = 0
         for i, file_path in enumerate(all_files): 
             file_name = os.path.basename(file_path)        
-            print(file_name)
+            print('Input File: ', file_name)
             with pd.HDFStore(file_path) as hdf_input:  
                 file_index = 0
-                for df_features in hdf_input.select(tag + '/features', chunksize = 500000):
+                for df_features in hdf_input.select(tag + '/features', chunksize = input_chunk_size):
                     try:                            
-                        df_labels = hdf_input.select(tag + '/labels', start = file_index, stop = file_index + df_features.shape[0])
-                        # df_labels = df_labels.reset_index(level='index', drop=True)                                                
-                        # df_labels.set_index('index', range(0, chunk_size), append=True, inplace=True)                                                
-                        df_features.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(df_features.index, range(0, df_features.shape[0]))])
-                        df_labels.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(df_labels.index, range(0, df_labels.shape[0]))])
+                        df_labels = hdf_input.select(tag + '/labels', start = file_index, stop = file_index + df_features.shape[0])                        
+                        # df_labels.set_index('index', range(0, chunk_size), append=True, inplace=True)              
+                        if (with_index==True):
+                            df_features.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(df_features.index, range(target_index, target_index + df_features.shape[0]))])
+                            df_labels.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(df_labels.index, range(target_index, target_index + df_labels.shape[0]))])
+                        else:
+                            df_features.reset_index(drop=True, inplace=True)
+                            df_labels.reset_index(drop=True, inplace=True)
+                            
                         file_index += df_features.shape[0]
+                        target_index += df_features.shape[0]
                         hdf_target.put(tag + '/features', df_features, append=True) 
                         hdf_target.put(tag + '/labels', df_labels, append=True)                        
                         hdf_target.flush()      
                         total_rows += df_features.shape[0]
                         print('total_rows: ', total_rows)
-                        if (total_rows >= chunk_size):
+                        if (total_rows >= target_size):
                             if hdf_target.get_storer(tag+'/features').nrows != hdf_target.get_storer(tag + '/labels').nrows:
                                 raise ValueError('DataSet: Sizes should match!')
                             hdf_target.close()
                             total_rows = 0
                             chunk_ind += 1
-                            if ((i<len(all_files)) or (i+1==len(all_files) and df_features.shape[0]>=500000)):
-                                target_path = os.path.join(PRO_DIR, set_dir,target_name+'_{:d}.h5'.format(chunk_ind))
-                                hdf_target =  pd.HDFStore(target_path, complib='bzip2', complevel=9)
-                                print('Target Path: ', target_path)                                                    
+                            if ((i+1<len(all_files)) or (i+1==len(all_files) and df_features.shape[0]>=input_chunk_size)):
+                                if (with_index==True):      
+                                    target_path = os.path.join(PRO_DIR, set_dir,target_name+'_{:d}.h5'.format(chunk_ind))                                    
+                                else:
+                                    target_path = os.path.join(PRO_DIR, set_dir,target_name+'_non_index_{:d}.h5'.format(chunk_ind))                                                                
+                                hdf_target =  pd.HDFStore(target_path, complib='lzo', complevel=9)
+                                print('Target Path: ', target_path)  
+                                target_index = 0                                                  
                         del df_labels
                         del df_features                                            
                     except Exception as e:
-                        if hdf_target.is_open(): hdf_target.close()
-        
-        if hdf_target.is_open(): hdf_target.close()
+                        if hdf_target.is_open: hdf_target.close()        
+        if hdf_target.is_open: hdf_target.close()
     except Exception as e:        
-        hdf_target.close()
+        if hdf_target.is_open: hdf_target.close()
         print(e)
                        
 def get_h5_dataset(train_dir, valid_dir, test_dir, train_period=[121, 279], valid_period=[280,285], test_period=[286, 304]):
@@ -889,12 +901,12 @@ def get_h5_dataset(train_dir, valid_dir, test_dir, train_period=[121, 279], vali
     return DATA
 
     
-def allfeatures_preprocessing(raw_dir, train_num, valid_num, test_num, dividing='percentage', chunksize=500000, refNorm=True):            
+def allfeatures_preprocessing(raw_dir, train_num, valid_num, test_num, dividing='percentage', chunksize=500000, refNorm=True, with_index=True):            
     for file_path in glob.glob(os.path.join(RAW_DIR, raw_dir,"*.txt")):  
         print('Preprocessing File: ' + file_path)
         startTime = datetime.now()
         file_name = os.path.basename(file_path)
-        allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num, test_num, dividing=dividing, chunksize=chunksize, refNorm=refNorm)          
+        allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num, test_num, dividing=dividing, chunksize=chunksize, refNorm=refNorm, with_index=with_index)          
         print('Preprocessing Time: ', datetime.now() - startTime)     
 
 
@@ -933,17 +945,17 @@ def main(project_dir):
     logger.name ='__main__'     
     logger.info('Retrieving DataFrame from Raw Data, Data Sampling')
     
-    startTime = datetime.now()
-    allfeatures_preprocessing('chunks_all_c1mill', [121, 279], [280,285], [286, 304], dividing='percentage', chunksize=500000, refNorm=True)        
-    print('Preprocessing - Time: ', datetime.now() - startTime)
-    
 #    startTime = datetime.now()
+#    allfeatures_preprocessing('chunks_all_800th', [121, 279], [280,285], [286, 304], dividing='percentage', chunksize=500000, refNorm=True, with_index=True)        
+#    print('Preprocessing - Time: ', datetime.now() - startTime)
+    
+    startTime = datetime.now()
 #   get_other_set('chunks_all_c100th', 280, 285, 'validation_set') # from     
 #    slice_fixed_sets('chunks_all_c1millx3', 'train_set_1millx70th', 'train', chunk_size=70000) # from    # chunks_all_800th 
-#    slice_table_sets('chunks_all_c1millx3', 'train_set_1millx30mill', 'train', 'c1millx30mill', chunk_size=30000000)
+    slice_table_sets('chunks_all_c1millx3', 'chunks_all_c1millx3', 'train', 'chunks_all_c1millx30mill_cs1200', target_size=30000000, with_index=False)
     # get_other_set('chunks_all_c100th', 'c100th_valid_set', 'valid', chunk_size=300000) # from     
     # get_other_set('chunks_all_c100th', 'c100th_test_set', 'test', chunk_size=500000) # from         
-#    print('Dividing .h5 files - Time: ', datetime.now() - startTime)
+    print('Dividing .h5 files - Time: ', datetime.now() - startTime)
 
 
 

@@ -699,3 +699,29 @@ def public_fn_with_googley_docstring(name, state=None):
 
     """
     return 0
+
+FOR ubuntu:
+$ git config --global user.name "Your Name"
+$ git config --global user.email "youremail@domain.com"
+
+git config --list
+user.name=sandralima111
+user.email=sandralima111@gmail.com
+
+https://github.com/sandralima/MLMortgage.git
+
+git remote -v
+origin	https://github.com/sandralima/MLMortgage.git (fetch)
+origin	https://github.com/sandralima/MLMortgage.git (push)
+
+$ git status
+git log --oneline
+$ git add .
+$ git commit -m "messsage"
+$ git log
+$ git push origin master
+
+$ git init
+Initialized empty Git repository in C:/Users/sandr/Documents/ENN/DLMortgage/DLMortgage/DLMortCookiecutter/mlmortgage/.git/
+
+

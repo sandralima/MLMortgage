@@ -1261,7 +1261,7 @@ def main(_):
     tf.gfile.MakeDirs(FLAGS.logdir)    
 
     conf_number = 1    
-    train_dir = 'chunks_all_c1millx3' # 'c100th_train_set' # 'train_set_800th'
+    train_dir = 'chunks_all_c1millx3' # 'train_set_1millx30mill' # 'c100th_train_set' # 'train_set_800th'
     valid_dir = 'c100th_valid_set' # chunks_all_800th 'valid_set_800th'
     test_dir = 'c100th_test_set' # 'test_set_800th'
     # training_dict = md.get_dataset_metadata(train_dir)

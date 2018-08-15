@@ -383,7 +383,7 @@ def get_datasets(data, train_num, valid_num, test_num, weight_flag=False, strati
         return train, valid, test, data_df.columns.values.tolist()
 
 
-def drop_invalid_delinquency_status(data, gflag):   
+def drop_invalid_delinquency_status(data, gflag, log_file):   
     
     logger.name = 'drop_invalid_delinquency_status'
     delinq_ids =  data[data['MBA_DELINQUENCY_STATUS'].isin(['0', 'R', 'S', 'T', 'X', 'Z'])]['LOAN_ID']
@@ -413,10 +413,15 @@ def drop_invalid_delinquency_status(data, gflag):
             track_i = df_delinq_01.index[0]
             iuw= iuw.union(group.index[group.index.get_loc(track_i)+1:])
         
-    if iuw!=[]:                        
+    if iuw!=[]:
+        #log_df = data.loc[iuw]
+        log_file.write('drop_invalid_delinquency_status - Total rows: %d\r\n' % len(iuw)) # (log_df.shape[0])
+        #log_file.write(data.iloc[iuw])
+        # np.savetxt(log_file, log_df.values, header=str(log_df.columns.values), delimiter=',')            
+        # log_df.to_csv(log_file, index=False, mode='a')
         data.drop(iuw, inplace=True) 
-        
-    logger.info('invalid_delinquency_status dropped')     
+        logger.info('invalid_delinquency_status dropped')             
+    
     return gflag
 
 
@@ -484,7 +489,7 @@ def splitDataFrameIntoSmaller(df, chunkSize = 1200):
         listOfDf.append(df[i*chunkSize:(i+1)*chunkSize])
     return listOfDf
 
-def allfeatures_prepro_file(file_path, raw_dir, file_name, train_period, valid_period, test_period, dividing='percentage', chunksize=500000, 
+def allfeatures_prepro_file(file_path, raw_dir, file_name, target_path, train_period, valid_period, test_period, log_file, dividing='percentage', chunksize=500000, 
                             refNorm=True, label='DELINQUENCY_STATUS_NEXT', with_index=True):
     descriptive_cols = [
 #        'LOAN_ID',
@@ -589,10 +594,7 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_period, valid_p
     minmax_normalizer.center_ = np.delete(minmax_normalizer.center_,to_delete, 0)
     minmax_cols = np.delete(minmax_cols,to_delete, 0)            
     
-    if with_index==True:
-        target_path = os.path.join(PRO_DIR, raw_dir,file_name[:-4])
-    else:
-        target_path = os.path.join(PRO_DIR, raw_dir,file_name[:-4]+'_non_index')
+
     with  pd.HDFStore(target_path +'-pp.h5', complib='lzo', complevel=9) as hdf: #
         gflag = ''    
         i = 1                  
@@ -601,30 +603,60 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_period, valid_p
         test_index = 0
         for chunk in pd.read_csv(file_path, chunksize = chunksize, sep=',', low_memory=False):    
             print('chunk: ', i, ' chunk size: ', chunk.shape[0])
+            log_file.write('chunk: %d, chunk size: %d \n' % (i, chunk.shape[0]))
             chunk.columns = chunk.columns.str.upper()                            
             
+            log_df = chunk[chunk[label].isnull()]
+            log_file.write('Dropping Rows with Null Labels - Number of rows: %d\r\n' % (log_df.shape[0]))
+            # log_df.to_csv(log_file, index=False, mode='a') #summary
             chunk.drop(chunk.index[chunk[label].isnull()], axis=0, inplace=True)
+            
+            log_df = chunk[chunk['INVALID_TRANSITIONS']==1]
+            log_file.write('Dropping Rows with Invalid Transitions - Number of rows: %d\r\n' % (log_df.shape[0]))                        
+            # log_df.to_csv(log_file, index=False, mode='a') #summary
             chunk.drop(chunk.index[chunk['INVALID_TRANSITIONS']==1], axis=0, inplace=True)        
-            gflag = drop_invalid_delinquency_status(chunk, gflag)               
+            
+            gflag = drop_invalid_delinquency_status(chunk, gflag, log_file)               
                         
-            nan_cols = imputing_nan_values(nan_cols, dist_file)
+            null_columns=chunk.columns[chunk.isnull().any()]
+            log_df = chunk[chunk.isnull().any(axis=1)][null_columns]
+            log_file.write('Filling NULL values - (rows, cols) : %d, %d\r\n' % (log_df.shape[0], log_df.shape[1]))            
+            # log_df.to_csv(log_file, index=False, mode='a')  #summary          
+            log_df = chunk[null_columns].isnull().sum().to_frame().reset_index()
+            log_df.to_csv(log_file, index=False, mode='a')                                    
+            nan_cols = imputing_nan_values(nan_cols, dist_file)            
             chunk.fillna(value=nan_cols, inplace=True)   
+            
             chunk.drop_duplicates(inplace=True) # Follow this instruction!!                        
             logger.info('dropping invalid transitions and delinquency status, fill nan values, drop duplicates')                  
+            log_file.write('Drop duplicates - new size : %d\r\n' % (chunk.shape[0]))
                        
             chunk.reset_index(drop=True, inplace=True)  #don't remove this line! otherwise NaN values appears.
             for k,v in categorical_cols.items():
                 new_cols = oneHotDummies_column(chunk[k], v)
                 chunk[new_cols.columns] = new_cols
+                #np.savetxt(log_file, new_cols.columns.values, header='New columns added:', newline=" ")
+                log_file.write('New columns added: %s\r\n' % str(new_cols.columns.values))
+                
                         
-            allfeatures_drop_cols(chunk, descriptive_cols)        
+            allfeatures_drop_cols(chunk, descriptive_cols)                    
+            #np.savetxt(log_file, descriptive_cols, header='descriptive_cols dropped:', newline=" ")
+            log_file.write('descriptive_cols dropped: %s\r\n' % str(descriptive_cols))
             allfeatures_drop_cols(chunk, time_cols)
+            #np.savetxt(log_file, time_cols, header='time_cols dropped:', newline=" ")
+            log_file.write('time_cols dropped: %s\r\n' % str(time_cols))
             cat_list = list(categorical_cols.keys())
             cat_list.remove('DELINQUENCY_STATUS_NEXT')
+            #np.savetxt(log_file, cat_list, header='categorical_cols dropped:', newline=" ")
+            log_file.write('categorical_cols dropped: %s\r\n' % str(cat_list))
             allfeatures_drop_cols(chunk, cat_list)
 
             chunk.reset_index(drop=True, inplace=True)  
             chunk.set_index(['LOAN_ID', 'DELINQUENCY_STATUS_NEXT', 'PERIOD'], append=True, inplace=True) #4 indexes
+            # np.savetxt(log_file, str(chunk.index.names), header='Indexes created:', newline=" ")
+            log_file.write('Indexes created: %s\r\n' % str(chunk.index.names))
+            
+            
             
             if chunk.isnull().any().any(): raise ValueError('There are null values...File: ' + file_name)   
                     
@@ -632,13 +664,19 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_period, valid_p
             if (refNorm==True):            
                 chunk[robust_cols] = robust_normalizer.transform(chunk[robust_cols])
                 chunk[minmax_cols] = minmax_normalizer.transform(chunk[minmax_cols])            
-                
+                #np.savetxt(log_file, robust_cols, header='robust_cols normalized:', newline=" ")
+                log_file.write('robust_cols normalized: %s\r\n' % str(robust_cols))
+                #np.savetxt(log_file, minmax_cols, header='minmax_cols normalized:', newline=" ")
+                log_file.write('minmax_cols normalized: %s\r\n' % str(minmax_cols))
+            
             if chunk.isnull().any().any(): raise ValueError('There are null values...File: ' + file_name)   
             
             chunk_periods = set(list(chunk.index.get_level_values('PERIOD')))
             
             inter_periods = list(chunk_periods.intersection(set(range(train_period[0], train_period[1]+1))))            
+            log_file.write('Periods corresponding to train_period: %s\r\n' % str(inter_periods))
             p_chunk = chunk.loc[(slice(None), slice(None), slice(None), inter_periods), :]
+            log_file.write('Records for Training Set - Number of rows: %d\r\n' % (p_chunk.shape[0]))
             if (with_index==True):
                 p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(train_index, train_index + p_chunk.shape[0]))])
                 # p_chunk.reset_index(drop=True, inplace=True)
@@ -657,7 +695,9 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_period, valid_p
                     hdf.put('train/labels', sf, append=True)
                 
             inter_periods = list(chunk_periods.intersection(set(range(valid_period[0], valid_period[1]+1))))
+            log_file.write('Periods corresponding to valid_period: %s\r\n' % str(inter_periods))
             p_chunk = chunk.loc[(slice(None), slice(None), slice(None), inter_periods), :]
+            log_file.write('Records for Validation Set - Number of rows: %d\r\n' % (p_chunk.shape[0]))
             if (with_index==True):
                 p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(valid_index, valid_index + p_chunk.shape[0]))])
                 labels = allfeatures_extract_labels(p_chunk, columns=label)                        
@@ -672,11 +712,12 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_period, valid_p
                     hdf.put('valid/features', sf, append=True)                    
                 lb_subframes = splitDataFrameIntoSmaller(labels, chunkSize = 1200)
                 for sf in lb_subframes:
-                    hdf.put('valid/labels', sf, append=True)
-                    
+                    hdf.put('valid/labels', sf, append=True)                    
             
             inter_periods = list(chunk_periods.intersection(set(range(test_period[0], test_period[1]+1))))
+            log_file.write('Periods corresponding to test_period: %s\r\n' % str(inter_periods))
             p_chunk = chunk.loc[(slice(None), slice(None), slice(None), inter_periods), :]
+            log_file.write('Records for Testing Set - Number of rows: %d\r\n' % (p_chunk.shape[0]))
             if (with_index==True):
                 p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(test_index, test_index + p_chunk.shape[0]))])
                 labels = allfeatures_extract_labels(p_chunk, columns=label)            
@@ -692,7 +733,11 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_period, valid_p
                 lb_subframes = splitDataFrameIntoSmaller(labels, chunkSize = 1200)
                 for sf in lb_subframes:
                     hdf.put('test/labels', sf, append=True)
-                
+            
+            inter_periods = list(chunk_periods.intersection(set(range(test_period[1]+1,355))))    
+            log_file.write('Periods greater than test_period: %s\r\n' % str(inter_periods))
+            p_chunk = chunk.loc[(slice(None), slice(None), slice(None), inter_periods), :]
+            log_file.write('Records greater than test_period - Number of rows: %d\r\n' % (p_chunk.shape[0]))
             hdf.flush()
             del chunk
             del labels
@@ -709,7 +754,13 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, train_period, valid_p
         print('train/features size: ', hdf.get_storer('train/features').nrows)
         print('valid/features size: ', hdf.get_storer('valid/features').nrows)
         print('test/features size: ', hdf.get_storer('test/features').nrows)
-        logger.info('training, validation and testing set into .h5 file')    
+        
+        log_file.write('***SUMMARY***\n')
+        log_file.write('train/features size: %d\r\n' %(hdf.get_storer('train/features').nrows))
+        log_file.write('valid/features size: %d\r\n' %(hdf.get_storer('valid/features').nrows))
+        log_file.write('test/features size: %d\r\n' %(hdf.get_storer('test/features').nrows))
+
+        logger.info('training, validation and testing set into .h5 file')        
 
 
 def get_other_set_slice(prep_dir, init_period, end_period, set_dir, file_name, chunk_size=8000000):
@@ -830,11 +881,11 @@ def slice_fixed_sets(prep_dir, set_dir, tag, chunk_size=400000):
     except Exception as e:        
         print(e)                    
 
-def slice_table_sets(prep_dir, set_dir, tag, target_name, input_chunk_size=1200, target_size = 70000, with_index=True):
-    
+def slice_table_sets(prep_dir, set_dir, tag, target_name, input_chunk_size=1200, target_size = 70000, with_index=True, index=0):
+    '''The input directory must not be the same as the output directory, because the .h5 output files can be confused with the input files. '''
     pd.set_option('io.hdf.default_format', 'table')
     all_files = glob.glob(os.path.join(PRO_DIR, prep_dir, "*.h5"))        
-    chunk_ind = 0      
+    chunk_ind = index
     if (with_index==True):      
         target_path = os.path.join(PRO_DIR, set_dir,target_name+'_{:d}.h5'.format(chunk_ind))
     else:
@@ -891,7 +942,7 @@ def slice_table_sets(prep_dir, set_dir, tag, target_name, input_chunk_size=1200,
         if hdf_target.is_open: hdf_target.close()
         print(e)
                        
-def get_h5_dataset(train_dir, valid_dir, test_dir, train_period=[121, 279], valid_period=[280,285], test_period=[286, 304]):
+def get_h5_dataset(train_dir, valid_dir, test_dir, train_period=[121, 316], valid_period=[317,323], test_period=[324, 351]):
     train_path = os.path.join(PRO_DIR, train_dir)
     valid_path = os.path.join(PRO_DIR, valid_dir)
     test_path = os.path.join(PRO_DIR, test_dir)    
@@ -902,12 +953,22 @@ def get_h5_dataset(train_dir, valid_dir, test_dir, train_period=[121, 279], vali
 
     
 def allfeatures_preprocessing(raw_dir, train_num, valid_num, test_num, dividing='percentage', chunksize=500000, refNorm=True, with_index=True):            
+
     for file_path in glob.glob(os.path.join(RAW_DIR, raw_dir,"*.txt")):  
-        print('Preprocessing File: ' + file_path)
-        startTime = datetime.now()
         file_name = os.path.basename(file_path)
-        allfeatures_prepro_file(file_path, raw_dir, file_name, train_num, valid_num, test_num, dividing=dividing, chunksize=chunksize, refNorm=refNorm, with_index=with_index)          
-        print('Preprocessing Time: ', datetime.now() - startTime)     
+        if with_index==True:
+            target_path = os.path.join(PRO_DIR, raw_dir,file_name[:-4])        
+        else:
+            target_path = os.path.join(PRO_DIR, raw_dir,file_name[:-4]+'_non_index')
+        log_file=open(target_path+'-log.txt', 'w+', 1)        
+        print('Preprocessing File: ' + file_path)
+        log_file.write('Preprocessing File:  %s\r\n' % file_path)
+        startTime = datetime.now()        
+        allfeatures_prepro_file(file_path, raw_dir, file_name, target_path, train_num, valid_num, test_num, log_file, dividing=dividing, chunksize=chunksize, refNorm=refNorm, with_index=with_index)          
+        startTime = datetime.now() - startTime
+        print('Preprocessing Time: ', startTime)     
+        log_file.write('Preprocessing Time:  %s\r\n' % str(startTime))
+        log_file.close()
 
 
 def read_data_sets(num_examples, valid_num, test_num, weight_flag=False, stratified_flag=False, refNorm=True):
@@ -945,17 +1006,16 @@ def main(project_dir):
     logger.name ='__main__'     
     logger.info('Retrieving DataFrame from Raw Data, Data Sampling')
     
-#    startTime = datetime.now()
-#    allfeatures_preprocessing('chunks_all_800th', [121, 279], [280,285], [286, 304], dividing='percentage', chunksize=500000, refNorm=True, with_index=True)        
-#    print('Preprocessing - Time: ', datetime.now() - startTime)
-    
     startTime = datetime.now()
-#   get_other_set('chunks_all_c100th', 280, 285, 'validation_set') # from     
-#    slice_fixed_sets('chunks_all_c1millx3', 'train_set_1millx70th', 'train', chunk_size=70000) # from    # chunks_all_800th 
-    slice_table_sets('chunks_all_c1millx3', 'chunks_all_c1millx3', 'train', 'chunks_all_c1millx30mill_cs1200', target_size=30000000, with_index=False)
-    # get_other_set('chunks_all_c100th', 'c100th_valid_set', 'valid', chunk_size=300000) # from     
-    # get_other_set('chunks_all_c100th', 'c100th_test_set', 'test', chunk_size=500000) # from         
-    print('Dividing .h5 files - Time: ', datetime.now() - startTime)
+    #chuncks_random_c1mill chunks_all_800th
+    allfeatures_preprocessing('chuncks_random_c1mill', [121, 279], [280,285], [286, 304], dividing='percentage', chunksize=500000, refNorm=True, with_index=True)        
+    print('Preprocessing - Time: ', datetime.now() - startTime)
+    
+    #startTime = datetime.now()
+    #slice_table_sets('chuncks_random_c1mill', 'chuncks_random_c1mill', 'train', 'chuncks_random_c1mill_train_cs1200', target_size=36000000, with_index=False, index=2)
+    #slice_table_sets('chuncks_random_c1mill', 'chuncks_random_c1mill', 'valid', 'chuncks_random_c1mill_valid_cs1200', target_size=36000000, with_index=False, index=2)
+    #slice_table_sets('chuncks_random_c1mill', 'chuncks_random_c1mill', 'test', 'chuncks_random_c1mill_test_cs1200', target_size=36000000, with_index=False, index=2)
+    #print('Dividing .h5 files - Time: ', datetime.now() - startTime)
 
 
 

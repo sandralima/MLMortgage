@@ -35,6 +35,7 @@ import glob
 from os.path import abspath
 from pathlib import Path
 from inspect import getsourcefile
+from io import IOBase
 
 
 RANDOM_SEED = 123  # Set the seed to get reproducable results.
@@ -786,22 +787,24 @@ def run_model(comp_graph, name, net_number, FLAGS, DATA):
         except Exception as inst:            
             print('Exception on run_model: ', inst)
         finally:
-            print('Finally on run_model...')
+            print('Finally on run_model...')            
             for mode in writers:
                 writers[mode].close()
             if FLAGS.test_flag:
                 end_time = datetime.now() - start_time                                
                 test_metrics = batching_dataset(sess, writers, 'test', DATA, FLAGS)
-                bett_acc_test, m_mtx_mean_test, auc_aoc_mean_test, auc_pr_mean_test = print_stats(test_metrics, 'test')                
+                bett_acc_test, m_mtx_mean_test, auc_aoc_mean_test, auc_pr_mean_test = print_stats(test_metrics, 'test', FLAGS.log_file)                
                 test_file = Path(os.path.join(FLAGS.logdir, name + "_test_history.csv"))
                 if test_file.exists():
                     dtype=None
                 else: 
                     dtype = ['NN_name', 'NN_Number','Total Epochs', 'Execute Epochs', 'Total Training Time', 'Loss','LogLoss','Accuracy','Better-Accuracy','M-Measure Mean','AUC_AOC Mean','AUC_PR Mean']
+                
                 pd.DataFrame(data=[(name, net_number, FLAGS.epoch_num, return_epoch, end_time,test_metrics[4], test_metrics[5], test_metrics[1], bett_acc_test, m_mtx_mean_test, auc_aoc_mean_test, auc_pr_mean_test)], 
                              columns=dtype, index=None).to_csv(test_file, index=False, mode='a')   
                 
                 # DATA.train.__exit__(dtype(inst), inst, inst.__traceback__)
+                if (not FLAGS.log_file == None): FLAGS.log_file.close()
                 DATA.train.__exit__(None, None, None)
                 DATA.validation.__exit__(None, None, None)
                 DATA.test.__exit__(None, None, None)
@@ -850,10 +853,12 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
         epoch_metrics_train = acc_metrics_init(DATA)        
         try:
             print("Epoch: ", epoch)		
+            FLAGS.log_file.write('Epoch Number:  %d\r\n' % epoch)            
             start_time = datetime.now()
             for batch_i in range(batch_num):
                 batch_time = datetime.now()
                 print("batch Number: ", batch_i)
+                FLAGS.log_file.write('batch Number:  %d\r\n' % batch_i)            
                 batch_dict= create_feed_dict('batch', DATA, FLAGS)
                 step = epoch * batch_num + batch_i    # total steps for all epochs        
                 if step > 0 and (step * batch_size) % (DATA.train.total_num_examples) < batch_size:                
@@ -864,14 +869,21 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
                     
                 batch_metrics_train = get_metrics(sess, batch_dict)        
                 epoch_metrics_train = batch_stats(epoch_metrics_train, batch_metrics_train)             
-                print('Batch Time: ', datetime.now() - batch_time)            
+                batch_time = datetime.now() - batch_time
+                print('Batch Time: ', batch_time) 
+                FLAGS.log_file.write('Batch Time:  %s\r\n' % str(batch_time))
+            print("Calculating Epoch Metrics")
         except Exception as e:
             print('Exception on train_one_epoch', e)
             raise ValueError(e)
         finally:  
             epoch_metrics = (epoch_metrics_train[0], epoch_metrics_train[1]/batch_num, epoch_metrics_train[2]/batch_num, epoch_metrics_train[3]/batch_num, 
                              epoch_metrics_train[4]/batch_num, epoch_metrics_train[5]/batch_num, epoch_metrics_train[6]/batch_num)            
-            print('Epoch Time: ', datetime.now() - start_time)        
+            print(epoch_metrics)
+            FLAGS.log_file.write('epoch_metrics:  %s\r\n' % str(epoch_metrics))
+            start_time = datetime.now() - start_time
+            print('Epoch Time: ', start_time)        
+            FLAGS.log_file.write('Epoch Time:  %s\r\n' % str(start_time))
             
         return epoch_metrics 
 
@@ -903,10 +915,10 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
 #            try:
             FLAGS.epoch_flag = epoch
             epoch_metrics = train_one_epoch(epoch, FLAGS.batch_size, batch_num)
-            bett_acc_train, m_mtx_mean_train, auc_aoc_mean_train, auc_pr_mean_train = print_stats(epoch_metrics, 'train')        
+            bett_acc_train, m_mtx_mean_train, auc_aoc_mean_train, auc_pr_mean_train = print_stats(epoch_metrics, 'train', FLAGS.log_file)        
             # Validation set:                                
             valid_metrics = batching_dataset(sess, writers, 'valid', DATA, FLAGS)
-            bett_acc_valid, m_mtx_mean_valid, auc_aoc_mean_valid, auc_pr_mean_valid = print_stats(valid_metrics, 'valid')
+            bett_acc_valid, m_mtx_mean_valid, auc_aoc_mean_valid, auc_pr_mean_valid = print_stats(valid_metrics, 'valid', FLAGS.log_file)
             # model.set_weights(best_weights) ?? How to do that with tensorflow??
             # Do __not__ delete the following 2 lines; they periodically save the model.                
             saver.save(sess, checkpoint_file) # global_step=epoch
@@ -923,7 +935,7 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
                 # saver.save(sess, checkpoint_file) # global_step=epoch
                 best_epoch = epoch
             else:
-                if epoch - best_epoch == 10:
+                if epoch - best_epoch == 5:
                     print('Stopping: Not Improve in Validation Set after 10 epochs')
                     return_epoch = epoch
                     break        
@@ -955,7 +967,7 @@ def reshape_m_mtx(mtx):
     return temp
 
 
-def print_stats(stats, name):
+def print_stats(stats, name, log_file):
     """Print the given stats."""
         
     conf_mtx, acc, auc_list, m_mtx_list, loss, log_loss, auc_pr_list = stats          
@@ -972,49 +984,23 @@ def print_stats(stats, name):
 #    if (name!='train'):
     m_mtx = m_mtx_list # reshape_m_mtx(m_mtx_list)
     m_mtx_mean = np.float32(m_mtx.sum()) / (49 - 7)
-    print('Avg Cost in ' + name +': {:.5f}'.format(loss))        
-    print('Avg Log_Cost in ' + name +': {:.5f}'.format(log_loss))
-    print(
-        '{:s}:'.format(name),
-        '(Silly) Global-ACC={:.4f}, Better ACC={:.4f},'.format(
-            acc, bett_acc),
-        'Avg M-Measure={:.4f},'.format(m_mtx_mean),
-        'Avg AUC_AOC={:.4f}'.format(auc_aoc_mean), 'Avg AUC_PR={:.4f}'.format(auc_pr_mean))
-    print(('\t' * 6).join(['Total Confusion Matrix', 'Total M-Measure Matrix', 'Total AUC_AOC', 'Total AUC_PR']))
+    stdout = 'Avg Cost in ' + name +': {:.5f}\n'.format(loss)        
+    stdout = stdout + ' Avg Log_Cost in ' + name +': {:.5f}\n'.format(log_loss)
+    stdout = stdout +  '{:s}:'.format(name) + ' (Silly) Global-ACC={:.4f}, Better ACC={:.4f},'.format(acc, bett_acc) + \
+        ' Avg M-Measure={:.4f},'.format(m_mtx_mean) + \
+        ' Avg AUC_AOC={:.4f}'.format(auc_aoc_mean) + ' Avg AUC_PR={:.4f}\n'.format(auc_pr_mean)
+    stdout = stdout + ('\t' * 6).join(['Total Confusion Matrix', 'Total M-Measure Matrix', 'Total AUC_AOC', 'Total AUC_PR\n'])
     for conf_row, row, auc, auc_pr in zip(conf_mtx, m_mtx, auc_list, auc_pr_list):
         for conf_value in conf_row:
-            print('{:.4f}'.format(conf_value), '\t', end='')
-        print('|\t', end='')
+            stdout = stdout + '{:.4f}'.format(conf_value) + '\t'
+        stdout = stdout + '|\t'
         for value in row:
-            print('{:.4f}'.format(value), '\t', end='')
-        print('| \t{:.4f}'.format(auc), '| \t{:.4f}'.format(auc_pr), '\n')        
-    print('--------------------------------------------------------------'
-          '------------')
-#    else:    
-#        print('Avg Cost in ' + name +': {:.5f}'.format(loss))        
-#        print('Avg Log_Cost in ' + name +': {:.5f}'.format(log_loss))        
-##        sum_mtx = np.sum(conf_mtx, axis=1)
-##        for y in range(7):
-##            global_acc += conf_mtx[y,y] / (sum_mtx[y])
-##            
-##        global_acc /= conf_mtx.shape[0]
-#        m_mtx = m_mtx_list
-#        m_mtx_mean = np.float32(m_mtx.sum()) / (49 - 7)
-#        print(
-#            '{:s}:'.format(name),
-#            '(Silly) Batch-Avg_ACC={:.4f}, Better ACC={:.4f},'.format(acc, bett_acc),
-#            'Batch-Avg_M_Measure={:.4f},'.format(m_mtx_mean),
-#            'Batch-Avg_AUC_AOC={:.4f}'.format(auc_aoc_mean), 'Batch-Avg_AUC_PR={:.4f}'.format(auc_pr_mean))
-#        print(('\t' * 6).join(['Total Confusion Matrix', 'Batch-M_Measure Matrix', 'Batch-AUC_AOC', 'Batch-AUC_PR']))
-#        for conf_row, row, auc, auc_pr in zip(conf_mtx, m_mtx, auc_list, auc_pr_list):
-#            for conf_value in conf_row:
-#                print('{:.4f}'.format(conf_value), '\t', end='')
-#            print('|\t', end='')
-#            for value in row:
-#                print('{:.4f}'.format(value), '\t', end='')
-#            print('| \t{:.4f}'.format(auc), '| \t{:.4f}'.format(auc_pr), '\n')        
-#        print('--------------------------------------------------------------'
-#              '------------')        
+            stdout = stdout + '{:.4f}'.format(value) + '\t'
+        stdout = stdout + '| \t{:.4f}'.format(auc) + ' | \t{:.4f}'.format(auc_pr) + '\n'
+    stdout = stdout + '---------------------------------------------------------------------'
+          
+    print(stdout)
+    log_file.write('METRICS:  %s\r\n' % stdout)
     
     return bett_acc, m_mtx_mean, auc_aoc_mean, auc_pr_mean
     
@@ -1183,16 +1169,16 @@ def retrieve_tf_model(name, net_number, FLAGS):
 # ## SETTINGS
 ##########################
     
-def FLAGS_setting(FLAGS, flag_num):
+def FLAGS_setting(FLAGS, net_number):
     # To determine an optimal set of hyperparameters, see Section 11.4.2 of the
     # deep learning book. Has (1) grid, (2) random, and (3) Bayesian
     # model-based search methods.Swersky et al. have a paper mentioned in that
     # section (published in 2014).
 
     # Hyperparameters
-    FLAGS.epoch_num = 3  # 14  # 17  # 35  # 15
+    # FLAGS.epoch_num = 2  # 14  # 17  # 35  # 15
     #print("FLAGS.epoch_num", FLAGS.epoch_num)
-    FLAGS.batch_size = 4425 # 4000  
+    # FLAGS.batch_size = 141600 # 4425 # 4000  
     FLAGS.dropout_keep = 0.9  # 0.9  # 0.95  # .75  # .6
     # ### parameters for training optimizer.
     FLAGS.learning_rate = .1  # .075  # .15  # .25
@@ -1223,7 +1209,7 @@ def FLAGS_setting(FLAGS, flag_num):
     FLAGS.allow_summaries = False
     FLAGS.epoch_flag = 0
     
-    FLAGS.max_epoch_size = 4425
+    #FLAGS.max_epoch_size = 141600*70 #137 # -1
     
     FLAGS.valid_batch_size = 100000
     FLAGS.test_batch_size = 100000
@@ -1231,13 +1217,14 @@ def FLAGS_setting(FLAGS, flag_num):
     if FLAGS.n_hidden < 0 : raise ValueError('The size of hidden layer must be at least 0')
     if (FLAGS.n_hidden > 0) and (FLAGS.n_hidden != len(FLAGS.s_hidden)) : raise ValueError('Sizes in hidden layers should match!')
     
-    if (flag_num==0):
-        FLAGS.name ='default_settings'
-        return FLAGS
-    elif (flag_num==1):
+    if (net_number==0):
+        FLAGS.name ='default_settings'        
+    elif (net_number==1):
         FLAGS.name ='batch_layer_type'
-        FLAGS.batch_layer_type = 'batch'
-        return FLAGS
+        FLAGS.batch_layer_type = 'batch'        
+    
+    FLAGS.log_file = open(os.path.join(FLAGS.logdir, FLAGS.name + '_' + str(net_number) +"_log.txt"), 'w+', 1)
+    return FLAGS
 
 def architecture_settings(DATA, FLAGS):
     # Architecture	
@@ -1261,11 +1248,11 @@ def main(_):
     tf.gfile.MakeDirs(FLAGS.logdir)    
 
     conf_number = 1    
-    train_dir = 'chunks_all_c1millx3' # 'train_set_1millx30mill' # 'c100th_train_set' # 'train_set_800th'
-    valid_dir = 'c100th_valid_set' # chunks_all_800th 'valid_set_800th'
-    test_dir = 'c100th_test_set' # 'test_set_800th'
+    #FLAGS.train_dir = 'train_set_1millx30mill' #'train_set_1millx30mill' # 'chuncks_random_c1mill_train'#'chunks_all_c1millx3' # 'train_set_1millx30mill' # 'c100th_train_set' # 'train_set_800th'
+    #FLAGS.valid_dir = 'c100th_valid_set' #'c100th_valid_set' # 'chuncks_random_c1mill_valid' # chunks_all_800th 'valid_set_800th'
+    #FLAGS.test_dir = 'c100th_test_set' #'c100th_test_set' # 'chuncks_random_c1mill_test' # 'test_set_800th'
     # training_dict = md.get_dataset_metadata(train_dir)
-    DATA = md.get_h5_data(train_dir, valid_dir, test_dir) 
+    DATA = md.get_h5_data(FLAGS.train_dir, FLAGS.valid_dir, FLAGS.test_dir) 
     
 #    for file_path in glob.glob(os.path.join(PRO_DIR, subdir_name,"*.h5")):  
 #        file_name = os.path.basename(file_path)
@@ -1274,6 +1261,7 @@ def main(_):
     for i in range(conf_number):                        
         FLAGS = FLAGS_setting(FLAGS, i)
         print("FLAGS", FLAGS)
+        FLAGS.log_file.write('METRICS:  %s\r\n' % str(FLAGS))
         architecture = architecture_settings(DATA, FLAGS)
         graph = build_graph(architecture, FLAGS)        
         run_model(graph, 'testing_data', i,  FLAGS, DATA)            
@@ -1287,7 +1275,7 @@ def update_parser(parser):
     parser.add_argument(
         '--epoch_num',
         type=int,
-        default=1000,
+        default=10,
         help='Number of epochs to run trainer on the dataset.')
     parser.add_argument(
         '--dropout_keep',
@@ -1341,12 +1329,37 @@ def update_parser(parser):
         '--allow_summaries',
         type=bool,
         default=True,
-        help='Summaries by variable')
+        help='Recording Summaries by variable')
     parser.add_argument(
         '--max_epoch_size',
         type=int,
         default=-1,
-        help='How many observations will be passed by epoch. default value=-1 (all training set)')
+        help='How many observations will be passed per epoch. default value=-1 (all training set)')
+    parser.add_argument(
+        '--batch_size',
+        type=int,
+        default=4425,
+        help='How many observations will be passed per batch')
+    parser.add_argument(
+        '--log_file',
+        type=IOBase,
+        default=None,
+        help='file path for the log trace')
+    parser.add_argument(
+        '--train_dir',
+        type=str,
+        default='chuncks_random_c1mill_train',
+        help='Training directory inside data/processed/')
+    parser.add_argument(
+        '--valid_dir',
+        type=str,
+        default='chuncks_random_c1mill_valid',
+        help='Validation directory inside data/processed/')
+    parser.add_argument(
+        '--test_dir',
+        type=str,
+        default='chuncks_random_c1mill_test',
+        help='Testing directory inside data/processed/')
     return parser.parse_known_args()
 
 # %%

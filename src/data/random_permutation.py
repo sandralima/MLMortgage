@@ -13,6 +13,7 @@ import random
 #defining a class:    
 class CustomRandom(object):
     def __init__(self, max_parms, seedBase=0):
+        self.seedBase = seedBase
         self.m_index = seedBase
         self.prime =  self.getBiggestPrime(max_parms)    # 4294967291 # 32 bits
         self.xorOperand = random.getrandbits(int(max_parms).bit_length())  # 0x5bf03635 #31 bit_length
@@ -69,13 +70,13 @@ class CustomRandom(object):
                 if(cVal % 4 == 3):
                     return cVal
             cVal -= 1
-        return (4294967291)
+        return (max_perms)
     
     def get_batch(self, batch_size):
         
         batch_random = set()
         # z = 0
-        r = 0
+        # r = 0
         while True:        
             value = self.next()
             if value <= self.max_parms:
@@ -83,25 +84,29 @@ class CustomRandom(object):
                 # z +=1
                 if len(batch_random) >=batch_size:
                     break
-            else: r+=1            
-        print('randoms refused: ', r)
+            else: 
+                #r+=1 
+                #print('randoms refused: ', r)
+                #if r>=1:
+                self.m_index = self.seedBase
+                self.xorOperand = random.getrandbits(int(self.max_parms).bit_length())                    
         
         return batch_random
 
  
 def dump():
-    myRandom = CustomRandom(5000000000)  
+    myRandom = CustomRandom(19824000)  
         
-    for i in range(20):
-        batch_size = 1024
+    for i in range(141):
+        batch_size = 141600
         startTime = datetime.now()                        
-        print('Iteration: ', i)        
-        batch_random = myRandom.get_batch(batch_size)
-        print('Time for Getting' + str(batch_size) +' random elements: ', datetime.now() - startTime)
+        print('Batch: ', i)        
+        batch_random = list(myRandom.get_batch(batch_size))
+        print('Time for Getting ' + str(batch_size) +' random elements: ', datetime.now() - startTime)
         median = np.median(batch_random)
         iqr = np.percentile(batch_random, [25, 75])
         print('median: ', median, 'iqr: ', iqr)
-        print(len(set(batch_random)))
+        print('batch size: ', len(batch_random))
         plt.hist(batch_random, bins=200)
         plt.ylabel('counts')
         plt.show()

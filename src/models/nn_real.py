@@ -801,7 +801,7 @@ def run_model(comp_graph, name, net_number, FLAGS, DATA):
                     dtype = ['NN_name', 'NN_Number','Total Epochs', 'Execute Epochs', 'Total Training Time', 'Loss','LogLoss','Accuracy','Better-Accuracy','M-Measure Mean','AUC_AOC Mean','AUC_PR Mean']
                 
                 pd.DataFrame(data=[(name, net_number, FLAGS.epoch_num, return_epoch, end_time,test_metrics[4], test_metrics[5], test_metrics[1], bett_acc_test, m_mtx_mean_test, auc_aoc_mean_test, auc_pr_mean_test)], 
-                             columns=dtype, index=None).to_csv(test_file, index=False, mode='a')   
+                             columns=dtype, index=None).to_csv(test_file, index=False, mode='a', sep =';')   
                 
                 # DATA.train.__exit__(dtype(inst), inst, inst.__traceback__)
                 if (not FLAGS.log_file == None): FLAGS.log_file.close()
@@ -853,8 +853,7 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
         epoch_metrics_train = acc_metrics_init(DATA)        
         try:
             print("Epoch: ", epoch)		
-            FLAGS.log_file.write('Epoch Number:  %d\r\n' % epoch)            
-            start_time = datetime.now()
+            FLAGS.log_file.write('Epoch Number:  %d\r\n' % epoch) 
             for batch_i in range(batch_num):
                 batch_time = datetime.now()
                 print("batch Number: ", batch_i)
@@ -876,14 +875,11 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
         except Exception as e:
             print('Exception on train_one_epoch', e)
             raise ValueError(e)
-        finally:  
+        finally:              
             epoch_metrics = (epoch_metrics_train[0], epoch_metrics_train[1]/batch_num, epoch_metrics_train[2]/batch_num, epoch_metrics_train[3]/batch_num, 
                              epoch_metrics_train[4]/batch_num, epoch_metrics_train[5]/batch_num, epoch_metrics_train[6]/batch_num)            
             print(epoch_metrics)
-            FLAGS.log_file.write('epoch_metrics:  %s\r\n' % str(epoch_metrics))
-            start_time = datetime.now() - start_time
-            print('Epoch Time: ', start_time)        
-            FLAGS.log_file.write('Epoch Time:  %s\r\n' % str(start_time))
+            FLAGS.log_file.write('epoch_metrics:  %s\r\n' % str(epoch_metrics))                                    
             
         return epoch_metrics 
 
@@ -901,7 +897,7 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
         # best_weights = None
         train_history =[]
         valid_history=[]            
-        dtype = ['epoch','Loss','LogLoss','Accuracy','Better-Accuracy','M-Measure Mean','AUC_AOC Mean','AUC_PR Mean']
+        dtype = ['epoch','epoch_time','Loss','LogLoss','Accuracy','Better-Accuracy','M-Measure Mean','AUC_AOC Mean','AUC_PR Mean']
         checkpoint_file = os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number)) #'/model.ckpt' # os.path.join(FLAGS.logdir, 'model.ckpt')
 
         if FLAGS.max_epoch_size==-1:
@@ -914,20 +910,26 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
         for epoch in range(FLAGS.epoch_num):
 #            try:
             FLAGS.epoch_flag = epoch
+            epoch_time = datetime.now()
             epoch_metrics = train_one_epoch(epoch, FLAGS.batch_size, batch_num)
+            epoch_time = datetime.now() - epoch_time
+            FLAGS.log_file.write('Epoch Time:  %s\r\n' % str(epoch_time))
             bett_acc_train, m_mtx_mean_train, auc_aoc_mean_train, auc_pr_mean_train = print_stats(epoch_metrics, 'train', FLAGS.log_file)        
-            # Validation set:                                
+            # Validation set: 
+            valid_time = datetime.now()                               
             valid_metrics = batching_dataset(sess, writers, 'valid', DATA, FLAGS)
+            valid_time = datetime.now() - valid_time
+            FLAGS.log_file.write('Valid Time:  %s\r\n' % str(valid_time))
             bett_acc_valid, m_mtx_mean_valid, auc_aoc_mean_valid, auc_pr_mean_valid = print_stats(valid_metrics, 'valid', FLAGS.log_file)
             # model.set_weights(best_weights) ?? How to do that with tensorflow??
             # Do __not__ delete the following 2 lines; they periodically save the model.                
             saver.save(sess, checkpoint_file) # global_step=epoch
-            train_history += [(epoch, epoch_metrics[4], epoch_metrics[5], epoch_metrics[1], bett_acc_train, m_mtx_mean_train, auc_aoc_mean_train, auc_pr_mean_train)]
-            valid_history += [(epoch, valid_metrics[4], valid_metrics[5], valid_metrics[1], bett_acc_valid, m_mtx_mean_valid, auc_aoc_mean_valid, auc_pr_mean_valid)]
+            train_history += [(epoch, epoch_time, epoch_metrics[4], epoch_metrics[5], epoch_metrics[1], bett_acc_train, m_mtx_mean_train, auc_aoc_mean_train, auc_pr_mean_train)]
+            valid_history += [(epoch, valid_time, valid_metrics[4], valid_metrics[5], valid_metrics[1], bett_acc_valid, m_mtx_mean_valid, auc_aoc_mean_valid, auc_pr_mean_valid)]
             
             # Early Stopping:
-            if valid_metrics[5] < best_loss or best_loss == -1:
-                best_loss = valid_metrics[5]
+            if valid_metrics[4] < best_loss or best_loss == -1:
+                best_loss = valid_metrics[4]
                 # only_weights = [layer for layer in tf.trainable_variables() if layer.op.name.find('weights')>0 ]            
                 # if weights: best_weights =  weights[0].eval()  
                 # model.set_weights(best_weights) ?? How to do that with tensorflow??
@@ -936,9 +938,16 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
                 best_epoch = epoch
             else:
                 if epoch - best_epoch == 5:
-                    print('Stopping: Not Improve in Validation Set after 10 epochs')
+                    print('Stopping: Not Improving in Validation Set after 5 epochs')
+                    FLAGS.log_file.write('Stopping: Not Improving in Validation Set after 5 epochs  %d\r\n' % best_epoch)
                     return_epoch = epoch
-                    break        
+                    break       
+                
+            if valid_metrics[4] <= FLAGS.loss_tolerance:
+                print('Stopping: The loss tolerance was reached: ', FLAGS.loss_tolerance)
+                FLAGS.log_file.write('Stopping: The loss tolerance (%f) was reached \r\n' % FLAGS.loss_tolerance)
+                return_epoch = epoch
+                break
 #            finally:
 #                pd.DataFrame(data=train_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_train_history.csv"), index=False)
 #                pd.DataFrame(data=valid_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_valid_history.csv"), index=False)                        
@@ -949,8 +958,8 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
     finally:
         print('batch_training finally instance!')
         if return_epoch == 0: return_epoch = FLAGS.epoch_num    
-        pd.DataFrame(data=train_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_train_history.csv"), index=False)
-        pd.DataFrame(data=valid_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_valid_history.csv"), index=False)
+        pd.DataFrame(data=train_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_train_history.csv"), index=False, sep =';')
+        pd.DataFrame(data=valid_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_valid_history.csv"), index=False, sep =';')
         
     return return_epoch
 
@@ -1201,13 +1210,13 @@ def FLAGS_setting(FLAGS, net_number):
     FLAGS.test_flag = True
     FLAGS.xla = True  # False
     FLAGS.stratified_flag = False
-    FLAGS.batch_type = 'layer'    
+    #FLAGS.batch_type = 'batch'    
     FLAGS.weighted_sampling = False  # True  #
-    FLAGS.logdir =  os.path.join(Path.home(), 'real_summaries')  # 
+    # FLAGS.logdir =  os.path.join(Path.home(), 'real_summaries')  # 
     FLAGS.n_hidden = 3
     FLAGS.s_hidden = [200, 140, 140]
-    FLAGS.allow_summaries = False
-    FLAGS.epoch_flag = 0
+    # FLAGS.allow_summaries = False
+    FLAGS.epoch_flag = 0    
     
     #FLAGS.max_epoch_size = 141600*70 #137 # -1
     
@@ -1360,6 +1369,11 @@ def update_parser(parser):
         type=str,
         default='chuncks_random_c1mill_test',
         help='Testing directory inside data/processed/')
+    parser.add_argument(
+        '--loss_tolerance',
+        type=float,
+        default=0.0001,
+        help='stop criteria')     
     return parser.parse_known_args()
 
 # %%

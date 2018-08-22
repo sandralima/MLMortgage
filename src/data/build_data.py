@@ -19,6 +19,7 @@ from pathlib import Path
 from inspect import getsourcefile
 from datetime import datetime
 import math
+import argparse
 
 
 from sklearn.preprocessing import QuantileTransformer
@@ -990,6 +991,96 @@ def read_data_sets(num_examples, valid_num, test_num, weight_flag=False, stratif
                             weight_flag=weight_flag, stratified_flag=stratified_flag, refNorm=refNorm)    
     return data_classes.Dataset(train, valid, test, feature_columns)
 
+def update_parser(parser):
+    """Parse the arguments from the CLI and update the parser."""    
+    parser.add_argument(
+        '--prepro_step',
+        type=str,
+        default='preprocessing',
+        help='To execute a preprocessing method')    
+    #this is for allfeatures_preprocessing:
+    parser.add_argument(
+        '--train_period',
+        type=int,
+        nargs='*',
+        default=[121, 279],
+        help='Training Period')
+    parser.add_argument(
+        '--valid_period',
+        type=int,
+        nargs='*',
+        default=[280,285],
+        help='Validation Period')    
+    parser.add_argument(
+        '--test_period',
+        type=int,
+        nargs='*',
+        default=[286, 304],
+        help='Testing Period')    
+    parser.add_argument(
+        '--prepro_dir',
+        type=str,
+        default='chuncks_random_c1mill',
+        help='Directory with raw data inside data/raw/ and it will be the output directory inside data/processed/')    
+    parser.add_argument(
+        '--prepro_chunksize',
+        type=int,
+        default=500000,
+        help='Chunk size to put into the h5 file...')    
+    parser.add_argument(
+        '--prepro_with_index',
+        type=bool,
+        default=True,
+        help='To keep indexes for each record')
+    parser.add_argument(
+        '--ref_norm',
+        type=bool,
+        default=True,
+        help='To execute the normalization over the raw inputs')
+    
+    #to execute slice_table_sets:
+    parser.add_argument(
+        '--slice_input_dir',
+        type=str,
+        default='chuncks_random_c1mill',
+        help='Input data directory')
+    parser.add_argument(
+        '--slice_output_dir',
+        type=str,
+        default='chuncks_random_c1mill',
+        help='Output data directory. Input and output could be the same...')
+    parser.add_argument(
+        '--slice_tag',
+        type=str,
+        default='train',
+        help='features group to be extracted')
+    parser.add_argument(
+        '--slice_target_name',
+        type=str,
+        default='train_file',
+        help='file name root inside output directory')
+    parser.add_argument(
+        '--slice_chunksize',
+        type=int,
+        default=1200,
+        help='Chunk size to put into the h5 output files...')
+    parser.add_argument(
+        '--slice_target_size',
+        type=int,
+        default=36000000,
+        help='Output file size')
+    parser.add_argument(
+        '--slice_with_index',
+        type=bool,
+        default=False,
+        help='To keep indexes for each record')
+    parser.add_argument(
+        '--slice_index',
+        type=int,
+        default=0,
+        help='index to label each output file')       
+    
+    return parser.parse_known_args()
 
 
 def main(project_dir):
@@ -1005,17 +1096,28 @@ def main(project_dir):
     """   
     logger.name ='__main__'     
     logger.info('Retrieving DataFrame from Raw Data, Data Sampling')
-    
-    startTime = datetime.now()
-    #chuncks_random_c1mill chunks_all_800th
-    allfeatures_preprocessing('chuncks_random_c1mill', [121, 279], [280,285], [286, 304], dividing='percentage', chunksize=500000, refNorm=True, with_index=True)        
-    print('Preprocessing - Time: ', datetime.now() - startTime)
-    
-    #startTime = datetime.now()
-    #slice_table_sets('chuncks_random_c1mill', 'chuncks_random_c1mill', 'train', 'chuncks_random_c1mill_train_cs1200', target_size=36000000, with_index=False, index=2)
-    #slice_table_sets('chuncks_random_c1mill', 'chuncks_random_c1mill', 'valid', 'chuncks_random_c1mill_valid_cs1200', target_size=36000000, with_index=False, index=2)
-    #slice_table_sets('chuncks_random_c1mill', 'chuncks_random_c1mill', 'test', 'chuncks_random_c1mill_test_cs1200', target_size=36000000, with_index=False, index=2)
-    #print('Dividing .h5 files - Time: ', datetime.now() - startTime)
+    print("Run the main program.")
+
+    FLAGS, UNPARSED = update_parser(argparse.ArgumentParser())    
+    print("UNPARSED", UNPARSED)    
+        
+    if FLAGS.prepro_step == 'preprocessing':
+        startTime = datetime.now()
+        #chuncks_random_c1mill chunks_all_800th
+        #allfeatures_preprocessing('chuncks_random_c1mill', [121, 279], [280,285], [286, 304], dividing='percentage', chunksize=500000, refNorm=True, with_index=True)        
+        allfeatures_preprocessing(FLAGS.prepro_dir, FLAGS.train_period, FLAGS.valid_period, FLAGS.test_period, dividing='percentage', 
+                                  chunksize=FLAGS.prepro_chunksize, refNorm=FLAGS.ref_norm, with_index=FLAGS.prepro_with_index)        
+        print('Preprocessing - Time: ', datetime.now() - startTime)
+    elif FLAGS.prepro_step == 'preprocessing':
+        startTime = datetime.now()
+        slice_table_sets(FLAGS.slice_input_dir, FLAGS.slice_output_dir, FLAGS.slice_tag, FLAGS.slice_target_name, 
+                         target_size=FLAGS.slice_target_size, with_index=FLAGS.slice_with_index, index=FLAGS.slice_index)
+        #slice_table_sets('chuncks_random_c1mill', 'chuncks_random_c1mill', 'train', 'chuncks_random_c1mill_train_cs1200', target_size=36000000, with_index=False, index=2)
+        #slice_table_sets('chuncks_random_c1mill', 'chuncks_random_c1mill', 'valid', 'chuncks_random_c1mill_valid_cs1200', target_size=36000000, with_index=False, index=2)
+        #slice_table_sets('chuncks_random_c1mill', 'chuncks_random_c1mill', 'test', 'chuncks_random_c1mill_test_cs1200', target_size=36000000, with_index=False, index=2)
+        print('Dividing .h5 files - Time: ', datetime.now() - startTime)
+    else: 
+        print('Invalid prepro_step...')
 
 
 

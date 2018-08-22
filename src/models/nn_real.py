@@ -860,11 +860,11 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
                 FLAGS.log_file.write('batch Number:  %d\r\n' % batch_i)            
                 batch_dict= create_feed_dict('batch', DATA, FLAGS)
                 step = epoch * batch_num + batch_i    # total steps for all epochs        
-                if step > 0 and (step * batch_size) % (DATA.train.total_num_examples) < batch_size:                
-                    # print ('(step * batch_size) % (DATA.train.num_examples): ', (step * batch_size) % (DATA.train.num_examples))
-                    train_and_summarize(sess, writers, step, batch_dict)                
-                else:                
-                    _ = sess.run(['train'], feed_dict=batch_dict)                
+                #if step > 0 and (step * batch_size) % (DATA.train.total_num_examples) < batch_size:                
+                    # print ('(step * batch_size) % (DATA.train.num_examples): ', (step * batch_size) % (DATA.train.num_examples))                    
+                train_and_summarize(sess, writers, step, batch_dict)                
+                #else:                
+                #    _ = sess.run(['train'], feed_dict=batch_dict)                
                     
                 batch_metrics_train = get_metrics(sess, batch_dict)        
                 epoch_metrics_train = batch_stats(epoch_metrics_train, batch_metrics_train)             
@@ -1190,7 +1190,7 @@ def FLAGS_setting(FLAGS, net_number):
     # FLAGS.batch_size = 141600 # 4425 # 4000  
     FLAGS.dropout_keep = 0.9  # 0.9  # 0.95  # .75  # .6
     # ### parameters for training optimizer.
-    FLAGS.learning_rate = .1  # .075  # .15  # .25
+    #FLAGS.learning_rate = .1  # .075  # .15  # .25
     FLAGS.momentum = .5  # used by the momentum SGD.
 
     # ### parameters for inverse_time_decay
@@ -1213,8 +1213,8 @@ def FLAGS_setting(FLAGS, net_number):
     #FLAGS.batch_type = 'batch'    
     FLAGS.weighted_sampling = False  # True  #
     # FLAGS.logdir =  os.path.join(Path.home(), 'real_summaries')  # 
-    FLAGS.n_hidden = 3
-    FLAGS.s_hidden = [200, 140, 140]
+    #FLAGS.n_hidden = 3
+    #FLAGS.s_hidden = [200, 140, 140]
     # FLAGS.allow_summaries = False
     FLAGS.epoch_flag = 0    
     
@@ -1271,6 +1271,9 @@ def main(_):
         FLAGS = FLAGS_setting(FLAGS, i)
         print("FLAGS", FLAGS)
         FLAGS.log_file.write('METRICS:  %s\r\n' % str(FLAGS))
+        FLAGS.log_file.write('training files:  %s\r\n' % str(DATA.train._dict))
+        FLAGS.log_file.write('validation files:  %s\r\n' % str(DATA.validation._dict))
+        FLAGS.log_file.write('testing files:  %s\r\n' % str(DATA.test._dict))        
         architecture = architecture_settings(DATA, FLAGS)
         graph = build_graph(architecture, FLAGS)        
         run_model(graph, 'testing_data', i,  FLAGS, DATA)            

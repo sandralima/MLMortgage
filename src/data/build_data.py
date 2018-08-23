@@ -1048,7 +1048,7 @@ def update_parser(parser):
         '--slice_output_dir',
         type=str,
         default='chuncks_random_c1mill',
-        help='Output data directory. Input and output could be the same...')
+        help='Output data directory. Input and output could be the same per group, it is recommendable different directories...')
     parser.add_argument(
         '--slice_tag',
         type=str,
@@ -1057,7 +1057,7 @@ def update_parser(parser):
     parser.add_argument(
         '--slice_target_name',
         type=str,
-        default='train_file',
+        default='c1mill_train',
         help='file name root inside output directory')
     parser.add_argument(
         '--slice_chunksize',
@@ -1108,7 +1108,7 @@ def main(project_dir):
         allfeatures_preprocessing(FLAGS.prepro_dir, FLAGS.train_period, FLAGS.valid_period, FLAGS.test_period, dividing='percentage', 
                                   chunksize=FLAGS.prepro_chunksize, refNorm=FLAGS.ref_norm, with_index=FLAGS.prepro_with_index)        
         print('Preprocessing - Time: ', datetime.now() - startTime)
-    elif FLAGS.prepro_step == 'preprocessing':
+    elif FLAGS.prepro_step == 'slicing':
         startTime = datetime.now()
         slice_table_sets(FLAGS.slice_input_dir, FLAGS.slice_output_dir, FLAGS.slice_tag, FLAGS.slice_target_name, 
                          target_size=FLAGS.slice_target_size, with_index=FLAGS.slice_with_index, index=FLAGS.slice_index)

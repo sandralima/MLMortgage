@@ -860,11 +860,11 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
                 FLAGS.log_file.write('batch Number:  %d\r\n' % batch_i)            
                 batch_dict= create_feed_dict('batch', DATA, FLAGS)
                 step = epoch * batch_num + batch_i    # total steps for all epochs        
-                #if step > 0 and (step * batch_size) % (DATA.train.total_num_examples) < batch_size:                
+                if step > 0 and (step * batch_size) % (DATA.train.total_num_examples) < batch_size:                
                     # print ('(step * batch_size) % (DATA.train.num_examples): ', (step * batch_size) % (DATA.train.num_examples))                    
-                train_and_summarize(sess, writers, step, batch_dict)                
-                #else:                
-                #    _ = sess.run(['train'], feed_dict=batch_dict)                
+                    train_and_summarize(sess, writers, step, batch_dict)# for saving space on disk.        
+                else:                
+                    _ = sess.run(['train'], feed_dict=batch_dict)                
                     
                 batch_metrics_train = get_metrics(sess, batch_dict)        
                 epoch_metrics_train = batch_stats(epoch_metrics_train, batch_metrics_train)             

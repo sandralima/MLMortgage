@@ -596,7 +596,7 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, target_path, train_pe
     minmax_cols = np.delete(minmax_cols,to_delete, 0)            
     
 
-    with  pd.HDFStore(target_path +'-pp.h5', complib='lzo', complevel=9) as hdf: #
+    with  pd.HDFStore(target_path +'-pp.h5', complib='lzo', complevel=9) as hdf: #complib='lzo', complevel=9
         gflag = ''    
         i = 1                  
         train_index = 0
@@ -678,22 +678,29 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, target_path, train_pe
             log_file.write('Periods corresponding to train_period: %s\r\n' % str(inter_periods))
             p_chunk = chunk.loc[(slice(None), slice(None), slice(None), inter_periods), :]
             log_file.write('Records for Training Set - Number of rows: %d\r\n' % (p_chunk.shape[0]))
+            print('Records for Training Set - Number of rows:', p_chunk.shape[0])
             if (with_index==True):
                 p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(train_index, train_index + p_chunk.shape[0]))])
                 # p_chunk.reset_index(drop=True, inplace=True)
                 labels = allfeatures_extract_labels(p_chunk, columns=label)
-                hdf.put('train/features', p_chunk, append=True)
-                hdf.put('train/labels', labels, append=True)         
-                train_index += p_chunk.shape[0]
+                print((p_chunk.shape[0] == labels.shape[0]))
+                p_chunk = p_chunk.astype(np.float32)
+                labels = labels.astype(np.int8)
+                if (p_chunk.shape[0] != labels.shape[0]) : 
+                    print('Error in shapes:', p_chunk.shape, labels.shape)
+                else :
+                    hdf.put('train/features', p_chunk, append=True)
+                    hdf.put('train/labels', labels, append=True)         
+                    train_index += p_chunk.shape[0]
             else:
                 p_chunk.reset_index(drop=True, inplace=True)
                 labels = allfeatures_extract_labels(p_chunk, columns=label)                
-                pc_subframes = splitDataFrameIntoSmaller(p_chunk, chunkSize = 1200)
+                pc_subframes = splitDataFrameIntoSmaller(p_chunk, chunkSize = 1000)
                 for sf in pc_subframes:
-                    hdf.put('train/features', sf, append=True)                    
-                lb_subframes = splitDataFrameIntoSmaller(labels, chunkSize = 1200)
+                    hdf.put('train/features', sf.astype(np.float32), append=True)                    
+                lb_subframes = splitDataFrameIntoSmaller(labels, chunkSize = 1000)
                 for sf in lb_subframes:
-                    hdf.put('train/labels', sf, append=True)
+                    hdf.put('train/labels', sf.astype('int8'), append=True)
                 
             inter_periods = list(chunk_periods.intersection(set(range(valid_period[0], valid_period[1]+1))))
             log_file.write('Periods corresponding to valid_period: %s\r\n' % str(inter_periods))
@@ -702,18 +709,18 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, target_path, train_pe
             if (with_index==True):
                 p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(valid_index, valid_index + p_chunk.shape[0]))])
                 labels = allfeatures_extract_labels(p_chunk, columns=label)                        
-                hdf.put('valid/features', p_chunk, append=True)
-                hdf.put('valid/labels', labels, append=True) 
+                hdf.put('valid/features', p_chunk.astype(np.float32), append=True)
+                hdf.put('valid/labels', labels.astype('int8'), append=True) 
                 valid_index += p_chunk.shape[0]                                  
             else:
                 p_chunk.reset_index(drop=True, inplace=True)
                 labels = allfeatures_extract_labels(p_chunk, columns=label)
-                pc_subframes = splitDataFrameIntoSmaller(p_chunk, chunkSize = 1200)
+                pc_subframes = splitDataFrameIntoSmaller(p_chunk, chunkSize = 1000)
                 for sf in pc_subframes:
-                    hdf.put('valid/features', sf, append=True)                    
-                lb_subframes = splitDataFrameIntoSmaller(labels, chunkSize = 1200)
+                    hdf.put('valid/features', sf.astype(np.float32), append=True)                    
+                lb_subframes = splitDataFrameIntoSmaller(labels, chunkSize = 1000)
                 for sf in lb_subframes:
-                    hdf.put('valid/labels', sf, append=True)                    
+                    hdf.put('valid/labels', sf.astype('int8'), append=True)                    
             
             inter_periods = list(chunk_periods.intersection(set(range(test_period[0], test_period[1]+1))))
             log_file.write('Periods corresponding to test_period: %s\r\n' % str(inter_periods))
@@ -722,18 +729,18 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, target_path, train_pe
             if (with_index==True):
                 p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(test_index, test_index + p_chunk.shape[0]))])
                 labels = allfeatures_extract_labels(p_chunk, columns=label)            
-                hdf.put('test/features', p_chunk, append=True)
-                hdf.put('test/labels', labels, append=True)                        
+                hdf.put('test/features', p_chunk.astype(np.float32), append=True)
+                hdf.put('test/labels', labels.astype('int8'), append=True)                        
                 test_index += p_chunk.shape[0]                                    
             else:
                 p_chunk.reset_index(drop=True, inplace=True)
                 labels = allfeatures_extract_labels(p_chunk, columns=label)                
-                pc_subframes = splitDataFrameIntoSmaller(p_chunk, chunkSize = 1200)
+                pc_subframes = splitDataFrameIntoSmaller(p_chunk, chunkSize = 1000)
                 for sf in pc_subframes:
-                    hdf.put('test/features', sf, append=True)                    
-                lb_subframes = splitDataFrameIntoSmaller(labels, chunkSize = 1200)
+                    hdf.put('test/features', sf.astype(np.float32), append=True)                    
+                lb_subframes = splitDataFrameIntoSmaller(labels, chunkSize = 1000)
                 for sf in lb_subframes:
-                    hdf.put('test/labels', sf, append=True)
+                    hdf.put('test/labels', sf.astype('int8'), append=True)
             
             inter_periods = list(chunk_periods.intersection(set(range(test_period[1]+1,355))))    
             log_file.write('Periods greater than test_period: %s\r\n' % str(inter_periods))
@@ -996,7 +1003,7 @@ def update_parser(parser):
     parser.add_argument(
         '--prepro_step',
         type=str,
-        default='preprocessing',
+        default='slicing', #'slicing', 'preprocessing'
         help='To execute a preprocessing method')    
     #this is for allfeatures_preprocessing:
     parser.add_argument(
@@ -1062,7 +1069,7 @@ def update_parser(parser):
     parser.add_argument(
         '--slice_chunksize',
         type=int,
-        default=1200,
+        default=1000,
         help='Chunk size to put into the h5 output files...')
     parser.add_argument(
         '--slice_target_size',
@@ -1077,7 +1084,7 @@ def update_parser(parser):
     parser.add_argument(
         '--slice_index',
         type=int,
-        default=0,
+        default=2,
         help='index to label each output file')       
     
     return parser.parse_known_args()
@@ -1111,7 +1118,7 @@ def main(project_dir):
     elif FLAGS.prepro_step == 'slicing':
         startTime = datetime.now()
         slice_table_sets(FLAGS.slice_input_dir, FLAGS.slice_output_dir, FLAGS.slice_tag, FLAGS.slice_target_name, 
-                         target_size=FLAGS.slice_target_size, with_index=FLAGS.slice_with_index, index=FLAGS.slice_index)
+                         target_size=FLAGS.slice_target_size, with_index=FLAGS.slice_with_index, index=FLAGS.slice_index, input_chunk_size = FLAGS.slice_chunksize)
         #slice_table_sets('chuncks_random_c1mill', 'chuncks_random_c1mill', 'train', 'chuncks_random_c1mill_train_cs1200', target_size=36000000, with_index=False, index=2)
         #slice_table_sets('chuncks_random_c1mill', 'chuncks_random_c1mill', 'valid', 'chuncks_random_c1mill_valid_cs1200', target_size=36000000, with_index=False, index=2)
         #slice_table_sets('chuncks_random_c1mill', 'chuncks_random_c1mill', 'test', 'chuncks_random_c1mill_test_cs1200', target_size=36000000, with_index=False, index=2)

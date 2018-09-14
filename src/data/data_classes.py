@@ -162,7 +162,7 @@ class DataBatch(object):
             # temp_labels = pd.read_hdf(self._dict[self.dataset_index]['dataset'], self.dtype+'/labels', start=self._file_index, stop=self._file_index + batch_size)
             # temp_features = self._dict[self.dataset_index]['dataset'].select(self.dtype+'/features', start=self._file_index, stop=self._file_index + batch_size)
             temp_features = self._dict[self.dataset_index]['dataset_features'][self._file_index: self._file_index + batch_size, :]
-            temp_labels = self._dict[self.dataset_index]['dataset_labels'][self._file_index, self._file_index + batch_size, :]
+            temp_labels = self._dict[self.dataset_index]['dataset_labels'][self._file_index: self._file_index + batch_size, :]
             self._file_index += batch_size
         else:            
             # temp_features = pd.read_hdf(self._dict[self.dataset_index]['dataset'], self.dtype+'/features', start=self._file_index)            
@@ -276,8 +276,8 @@ class DataBatch(object):
                     #print('File: ', k, 'Time for one file lecture: ', datetime.now() - startTime2, ' records: ',  len(orb))
                     
 #                    startTime3 = datetime.now()
-                    temp_features = np.concatenate((temp_features, df_features.values))
-                    temp_labels = np.concatenate((temp_labels, df_labels.values))
+                    temp_features = np.concatenate((temp_features, df_features))
+                    temp_labels = np.concatenate((temp_labels, df_labels))
 #                    print('File: ', k, 'Time for append: ', datetime.now() - startTime3, ' records: ',  len(orb))
                     
                     # print('File ', k, ': ',file_path, ' Time for one file lecture/append: ', datetime.now() - startTime1, ' records: ',  len(orb))            

@@ -26,7 +26,7 @@ from sklearn.preprocessing import QuantileTransformer
 from sklearn.preprocessing import RobustScaler
 from sklearn.preprocessing import OneHotEncoder
 
-DT_FLOAT = np.float32 
+DT_FLOAT = np.float16 
 DT_BOOL = np.uint8
 RANDOM_SEED = 123
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -684,7 +684,7 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, target_path, train_pe
                 # p_chunk.reset_index(drop=True, inplace=True)
                 labels = allfeatures_extract_labels(p_chunk, columns=label)
                 print((p_chunk.shape[0] == labels.shape[0]))
-                p_chunk = p_chunk.astype(np.float32)
+                p_chunk = p_chunk.astype(DT_FLOAT)
                 labels = labels.astype(np.int8)
                 if (p_chunk.shape[0] != labels.shape[0]) : 
                     print('Error in shapes:', p_chunk.shape, labels.shape)
@@ -697,7 +697,7 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, target_path, train_pe
                 labels = allfeatures_extract_labels(p_chunk, columns=label)                
                 pc_subframes = splitDataFrameIntoSmaller(p_chunk, chunkSize = 1000)
                 for sf in pc_subframes:
-                    hdf.put('train/features', sf.astype(np.float32), append=True)                    
+                    hdf.put('train/features', sf.astype(DT_FLOAT), append=True)                    
                 lb_subframes = splitDataFrameIntoSmaller(labels, chunkSize = 1000)
                 for sf in lb_subframes:
                     hdf.put('train/labels', sf.astype('int8'), append=True)
@@ -709,7 +709,7 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, target_path, train_pe
             if (with_index==True):
                 p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(valid_index, valid_index + p_chunk.shape[0]))])
                 labels = allfeatures_extract_labels(p_chunk, columns=label)                        
-                hdf.put('valid/features', p_chunk.astype(np.float32), append=True)
+                hdf.put('valid/features', p_chunk.astype(DT_FLOAT), append=True)
                 hdf.put('valid/labels', labels.astype('int8'), append=True) 
                 valid_index += p_chunk.shape[0]                                  
             else:
@@ -717,7 +717,7 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, target_path, train_pe
                 labels = allfeatures_extract_labels(p_chunk, columns=label)
                 pc_subframes = splitDataFrameIntoSmaller(p_chunk, chunkSize = 1000)
                 for sf in pc_subframes:
-                    hdf.put('valid/features', sf.astype(np.float32), append=True)                    
+                    hdf.put('valid/features', sf.astype(DT_FLOAT), append=True)                    
                 lb_subframes = splitDataFrameIntoSmaller(labels, chunkSize = 1000)
                 for sf in lb_subframes:
                     hdf.put('valid/labels', sf.astype('int8'), append=True)                    
@@ -729,7 +729,7 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, target_path, train_pe
             if (with_index==True):
                 p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(test_index, test_index + p_chunk.shape[0]))])
                 labels = allfeatures_extract_labels(p_chunk, columns=label)            
-                hdf.put('test/features', p_chunk.astype(np.float32), append=True)
+                hdf.put('test/features', p_chunk.astype(DT_FLOAT), append=True)
                 hdf.put('test/labels', labels.astype('int8'), append=True)                        
                 test_index += p_chunk.shape[0]                                    
             else:
@@ -737,7 +737,7 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, target_path, train_pe
                 labels = allfeatures_extract_labels(p_chunk, columns=label)                
                 pc_subframes = splitDataFrameIntoSmaller(p_chunk, chunkSize = 1000)
                 for sf in pc_subframes:
-                    hdf.put('test/features', sf.astype(np.float32), append=True)                    
+                    hdf.put('test/features', sf.astype(DT_FLOAT), append=True)                    
                 lb_subframes = splitDataFrameIntoSmaller(labels, chunkSize = 1000)
                 for sf in lb_subframes:
                     hdf.put('test/labels', sf.astype('int8'), append=True)
@@ -1003,7 +1003,7 @@ def update_parser(parser):
     parser.add_argument(
         '--prepro_step',
         type=str,
-        default='slicing', #'slicing', 'preprocessing'
+        default='preprocessing', #'slicing', 'preprocessing'
         help='To execute a preprocessing method')    
     #this is for allfeatures_preprocessing:
     parser.add_argument(

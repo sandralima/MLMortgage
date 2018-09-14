@@ -36,6 +36,7 @@ from os.path import abspath
 from pathlib import Path
 from inspect import getsourcefile
 from io import IOBase
+import psutil
 
 
 RANDOM_SEED = 123  # Set the seed to get reproducable results.
@@ -889,7 +890,11 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
         # # Create a saver for writing training checkpoints.
         saver = tf.train.Saver(var_list=None, max_to_keep=1)
         # # Initialize all the variables in the graph.
+        print('before init tf variables: ', psutil.virtual_memory()) #  physical memory usage
+        FLAGS.log_file.write('RAM before init tf variables: %s\r\n' % str(psutil.virtual_memory()))
         sess.run('init')
+        print('after init tf variables: ', psutil.virtual_memory()) #  physical memory usage
+        FLAGS.log_file.write('RAM after init tf variables: %s\r\n' % str(psutil.virtual_memory()))
         print('Initialized all the local and global variables in the graph....')
         
         best_loss = -1
@@ -948,6 +953,8 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
                 FLAGS.log_file.write('Stopping: The loss tolerance (%f) was reached \r\n' % FLAGS.loss_tolerance)
                 return_epoch = epoch
                 break
+            print('memory usage per epoch: ', psutil.virtual_memory()) #  physical memory usage
+            FLAGS.log_file.write('RAM memory usage per epoch: %s\r\n' % str(psutil.virtual_memory()))
 #            finally:
 #                pd.DataFrame(data=train_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_train_history.csv"), index=False)
 #                pd.DataFrame(data=valid_history, columns=dtype, index=None).to_csv(os.path.join(FLAGS.logdir, name[:-4] + '_' + FLAGS.name + '_' + str(net_number) +"_valid_history.csv"), index=False)                        
@@ -1275,8 +1282,14 @@ def main(_):
         FLAGS.log_file.write('validation files:  %s\r\n' % str(DATA.validation._dict))
         FLAGS.log_file.write('testing files:  %s\r\n' % str(DATA.test._dict))        
         architecture = architecture_settings(DATA, FLAGS)
+        print('RAM before build: ', psutil.virtual_memory()) #  physical memory usage
+        FLAGS.log_file.write('RAM  before build: %s\r\n' % str(psutil.virtual_memory()))
         graph = build_graph(architecture, FLAGS)        
-        run_model(graph, 'testing_data', i,  FLAGS, DATA)            
+        print('RAM after build', psutil.virtual_memory()) #  physical memory usage
+        FLAGS.log_file.write('RAM  after build: %s\r\n' % str(psutil.virtual_memory()))
+        run_model(graph, 'testing_data', i,  FLAGS, DATA)      
+        print('RAM after run model: ', psutil.virtual_memory()) #  physical memory usage
+        FLAGS.log_file.write('RAM  after run model: %s\r\n' % str(psutil.virtual_memory()))
     #FLAGS = FLAGS_setting(FLAGS, 1)
     #graph = build_graph(architecture, FLAGS)        
     #run_model(graph, 'Data1-100_' + FLAGS.name, 1,  FLAGS, DATA)    

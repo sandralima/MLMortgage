@@ -26,7 +26,7 @@ from sklearn.preprocessing import QuantileTransformer
 from sklearn.preprocessing import RobustScaler
 from sklearn.preprocessing import OneHotEncoder
 
-DT_FLOAT = np.float16 
+DT_FLOAT = np.float32 
 DT_BOOL = np.uint8
 RANDOM_SEED = 123
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')

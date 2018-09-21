@@ -576,7 +576,7 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, target_path, train_pe
                                                'MD', 'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH', 'NJ', 'NM', 'NV', 
                                                'NY', 'OH', 'OK', 'OR', 'PA', 'PR', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 
                                                'WA', 'WI', 'WV', 'WY'], 
-                           'CURRENT_INVESTOR_CODE': ['240', '250', '253', 'U'], 'ORIGINATION_YEAR': ['1995','1996','1997','1998','1999','2000','2001','2002','2003',
+                           'CURRENT_INVESTOR_CODE': ['240', '250', '253', 'U'], 'ORIGINATION_YEAR': ['B1995','1995','1996','1997','1998','1999','2000','2001','2002','2003',
                                                     '2004','2005','2006','2007','2008','2009','2010','2011','2012','2013','2014','2015','2016','2017','2018']}
       
     time_cols = ['YEAR', 'MONTH'] #, 'PERIOD'] #no nan values        
@@ -631,13 +631,18 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, target_path, train_pe
             chunk.drop_duplicates(inplace=True) # Follow this instruction!!                        
             logger.info('dropping invalid transitions and delinquency status, fill nan values, drop duplicates')                  
             log_file.write('Drop duplicates - new size : %d\r\n' % (chunk.shape[0]))
-                       
+                                   
             chunk.reset_index(drop=True, inplace=True)  #don't remove this line! otherwise NaN values appears.
+            chunk['ORIGINATION_YEAR'][chunk['ORIGINATION_YEAR']<1995] = "B1995"
             for k,v in categorical_cols.items():
+                chunk[k] = chunk[k].str.strip()
                 new_cols = oneHotDummies_column(chunk[k], v)
-                chunk[new_cols.columns] = new_cols
-                #np.savetxt(log_file, new_cols.columns.values, header='New columns added:', newline=" ")
-                log_file.write('New columns added: %s\r\n' % str(new_cols.columns.values))
+                if (chunk[k].value_counts().sum()!=new_cols.sum().sum()):
+                    print('Error at categorization, different sizes', k)
+                    print(chunk[k].value_counts(), new_cols.sum())
+                else:
+                    chunk[new_cols.columns] = new_cols
+                    log_file.write('New columns added: %s\r\n' % str(new_cols.columns.values))
                 
                         
             allfeatures_drop_cols(chunk, descriptive_cols)                    
@@ -656,7 +661,7 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, target_path, train_pe
             chunk.set_index(['LOAN_ID', 'DELINQUENCY_STATUS_NEXT', 'PERIOD'], append=True, inplace=True) #4 indexes
             # np.savetxt(log_file, str(chunk.index.names), header='Indexes created:', newline=" ")
             log_file.write('Indexes created: %s\r\n' % str(chunk.index.names))
-            
+             
             
             
             if chunk.isnull().any().any(): raise ValueError('There are null values...File: ' + file_name)   

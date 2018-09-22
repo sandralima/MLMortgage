@@ -635,6 +635,8 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, target_path, train_pe
             chunk.reset_index(drop=True, inplace=True)  #don't remove this line! otherwise NaN values appears.
             chunk['ORIGINATION_YEAR'][chunk['ORIGINATION_YEAR']<1995] = "B1995"
             for k,v in categorical_cols.items():
+                # if (chunk[k].dtype=='O'):                
+                chunk[k] = chunk[k].astype('str')
                 chunk[k] = chunk[k].str.strip()
                 new_cols = oneHotDummies_column(chunk[k], v)
                 if (chunk[k].value_counts().sum()!=new_cols.sum().sum()):
@@ -1008,26 +1010,26 @@ def update_parser(parser):
     parser.add_argument(
         '--prepro_step',
         type=str,
-        default='preprocessing', #'slicing', 'preprocessing'
+        default='slicing', #'slicing', 'preprocessing'
         help='To execute a preprocessing method')    
     #this is for allfeatures_preprocessing:
     parser.add_argument(
         '--train_period',
         type=int,
         nargs='*',
-        default=[121, 279],
+        default=[121,143],  # 279],
         help='Training Period')
     parser.add_argument(
         '--valid_period',
         type=int,
         nargs='*',
-        default=[280,285],
+        default=[144,147],
         help='Validation Period')    
     parser.add_argument(
         '--test_period',
         type=int,
         nargs='*',
-        default=[286, 304],
+        default=[148, 155],
         help='Testing Period')    
     parser.add_argument(
         '--prepro_dir',
@@ -1059,17 +1061,20 @@ def update_parser(parser):
     parser.add_argument(
         '--slice_output_dir',
         type=str,
-        default='chuncks_random_c1mill',
+        nargs='*',
+        default=['chuncks_random_c1mill_train', 'chuncks_random_c1mill_valid', 'chuncks_random_c1mill_test'],
         help='Output data directory. Input and output could be the same per group, it is recommendable different directories...')
     parser.add_argument(
         '--slice_tag',
         type=str,
-        default='train',
+        nargs='*',
+        default=['train', 'valid', 'test'],
         help='features group to be extracted')
     parser.add_argument(
         '--slice_target_name',
         type=str,
-        default='c1mill_train',
+        nargs='*',
+        default=['c1mill99-01_train', 'c1mill99-01_valid', 'c1mill99-01_test'],
         help='file name root inside output directory')
     parser.add_argument(
         '--slice_chunksize',
@@ -1089,7 +1094,7 @@ def update_parser(parser):
     parser.add_argument(
         '--slice_index',
         type=int,
-        default=2,
+        default=0,
         help='index to label each output file')       
     
     return parser.parse_known_args()
@@ -1116,18 +1121,23 @@ def main(project_dir):
     if FLAGS.prepro_step == 'preprocessing':
         startTime = datetime.now()
         #chuncks_random_c1mill chunks_all_800th
-        #allfeatures_preprocessing('chuncks_random_c1mill', [121, 279], [280,285], [286, 304], dividing='percentage', chunksize=500000, refNorm=True, with_index=True)        
+        #allfeatures_preprocessing('chuncks_random_c1mill', [121, 279], [280,285], [286, 304], dividing='percentage', chunksize=500000, refNorm=True, with_index=True)  
+        if not os.path.exists(os.path.join(PRO_DIR, FLAGS.prepro_dir)): #os.path.exists
+                os.makedirs(os.path.join(PRO_DIR, FLAGS.prepro_dir))
         allfeatures_preprocessing(FLAGS.prepro_dir, FLAGS.train_period, FLAGS.valid_period, FLAGS.test_period, dividing='percentage', 
                                   chunksize=FLAGS.prepro_chunksize, refNorm=FLAGS.ref_norm, with_index=FLAGS.prepro_with_index)        
         print('Preprocessing - Time: ', datetime.now() - startTime)
-    elif FLAGS.prepro_step == 'slicing':
-        startTime = datetime.now()
-        slice_table_sets(FLAGS.slice_input_dir, FLAGS.slice_output_dir, FLAGS.slice_tag, FLAGS.slice_target_name, 
-                         target_size=FLAGS.slice_target_size, with_index=FLAGS.slice_with_index, index=FLAGS.slice_index, input_chunk_size = FLAGS.slice_chunksize)
+    elif FLAGS.prepro_step == 'slicing':        
+        for i in range(len(FLAGS.slice_tag)):
+            startTime = datetime.now()
+            if not os.path.exists(os.path.join(PRO_DIR, FLAGS.slice_output_dir[i])): #os.path.exists
+                os.makedirs(os.path.join(PRO_DIR, FLAGS.slice_output_dir[i]))
+            slice_table_sets(FLAGS.slice_input_dir, FLAGS.slice_output_dir[i], FLAGS.slice_tag[i], FLAGS.slice_target_name[i], 
+                         target_size=FLAGS.slice_target_size, with_index=FLAGS.slice_with_index, index=FLAGS.slice_index, input_chunk_size = FLAGS.slice_chunksize)        
+            print('Dividing .h5 files - Time: ', datetime.now() - startTime)
         #slice_table_sets('chuncks_random_c1mill', 'chuncks_random_c1mill', 'train', 'chuncks_random_c1mill_train_cs1200', target_size=36000000, with_index=False, index=2)
         #slice_table_sets('chuncks_random_c1mill', 'chuncks_random_c1mill', 'valid', 'chuncks_random_c1mill_valid_cs1200', target_size=36000000, with_index=False, index=2)
-        #slice_table_sets('chuncks_random_c1mill', 'chuncks_random_c1mill', 'test', 'chuncks_random_c1mill_test_cs1200', target_size=36000000, with_index=False, index=2)
-        print('Dividing .h5 files - Time: ', datetime.now() - startTime)
+        #slice_table_sets('chuncks_random_c1mill', 'chuncks_random_c1mill', 'test', 'chuncks_random_c1mill_test_cs1200', target_size=36000000, with_index=False, index=2)        
     else: 
         print('Invalid prepro_step...')
 

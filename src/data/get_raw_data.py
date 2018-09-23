@@ -15,6 +15,7 @@ import glob
 import xlrd
 import ntpath
 import math
+import argparse
 
 
 from inspect import getsourcefile
@@ -65,7 +66,7 @@ def vertica_connection():
         logger.critical('Exception Error: ' + str(e))
     
 
-def execute_query(connection, query,  name, chunksize=0):
+def execute_query(connection, query,  query_file, chunksize=0):
     '''Execute a query from a database connection and return the result in a DataFrame.
     Args: 
         connection (Connection Object): connection object to a database.
@@ -80,24 +81,36 @@ def execute_query(connection, query,  name, chunksize=0):
         cur.execute(query)
         logger.info('query Executed...')
         columnList = [d.name for d in cur.description]        
-        i=0            
+        i=0               
+        if not query_file.exists():
+            with open(query_file, 'w') as f: 
+                # f.write(columnList)             
+                # wr = csv.writer(f, dialect='excel')
+                # wr.writerows(columnList)
+                # for d in cur.description:
+                #    f.write(d.name + ';')
+                # f.write('\n')
+                f.write(';'.join(columnList) + '\n')
         while (True):
             try:
                 if (chunksize>0):
-                    df = pd.DataFrame(cur.fetchmany(chunksize), columns=columnList)                
-                    if df.empty: break
-                    df.to_csv(os.path.join(RAW_DIR, name + "_" + str(++i) + ".csv"), index=False, sep=';', decimal='.')  #, chunksize=round(float(chunksize)/2)                    
+                    # for row in cur.iterate():                    
+                    df = pd.DataFrame(cur.fetchmany(chunksize), columns=None, index=None)                
+                    if df.empty: break                    
+                    df.to_csv(query_file, index=False, sep=';', decimal='.', header=False, mode='a')                    
+                    print(++i, '-Added: ', df.shape)
                     del df
                     gc.collect()
                 else:
-                    df = pd.DataFrame(cur.fetchall(), columns=columnList)                
-                    df.to_csv(os.path.join(RAW_DIR, name + ".csv"), index=False, sep=';', decimal='.') #, chunksize=round(float(chunksize)/2)
+                    df = pd.DataFrame(cur.fetchall(), columns=None, index=None)                
+                    df.to_csv(query_file, index=False, sep=';', decimal='.', header=False, mode='a')
+                    print('Added: ', df.shape)
                     del df
                     gc.collect()
                     break;                
             except Exception as e:
                 logger.critical('Error at Retrieving records: ' + sys.exc_info()[0])
-                break;
+                break;        
     except vp.ProgrammingError as pe:
         logger.critical('Error at Executing Query: ' + str(pe))        
     except Exception as e:
@@ -513,9 +526,198 @@ def income_taxes_fromcsv_tovertica():
                 conn.commit()     
                 conn.close()
              
-        
+def winyear_query(period_from, period_to, loan_from, loan_to):
     
+    mystring = """
+     select ld.Loan_Id, ld.Period, ld.AsOfMonth, ld.MBA_Delinquency_Status, 
+     ld.MBA_Days_Delinquent, CASE WHEN ld.MBA_Days_Delinquent IS NULL THEN 1 ELSE 0 END AS MBA_DAYS_DELINQUENT_nan,
+     ld.Current_Interest_Rate, CASE WHEN ld.Current_Interest_Rate IS NULL THEN 1 ELSE 0 END AS CURRENT_INTEREST_RATE_nan,
+     ld.Loanage, CASE WHEN ld.Loanage IS NULL THEN 1 ELSE 0 END AS Loanage_nan,
+     ld.Current_Balance, CASE WHEN ld.Current_Balance IS NULL THEN 1 ELSE 0 END AS current_balance_nan, 
+     ld.Scheduled_Principal, CASE WHEN ld.Scheduled_Principal IS NULL THEN 1 ELSE 0 END AS SCHEDULED_PRINCIPAL_nan,
+     ld.Scheduled_Monthly_PandI, CASE WHEN ld.Scheduled_Monthly_PandI IS NULL THEN 1 ELSE 0 END AS SCHEDULED_MONTHLY_PANDI_nan, 
+     ld.Current_Investor_Code,  DATE_PART('YEAR' , ((ld.AsofMonth)::VARCHAR)::Date) as year, DATE_PART('MONTH' , ((ld.AsofMonth)::VARCHAR)::Date) as month, 
+     (ld.Current_Interest_Rate - mr.Mortgage_Rate) as LLMA2_CURRENT_INTEREST_SPREAD, CASE WHEN (ld.Current_Interest_Rate - mr.Mortgage_Rate) IS NULL THEN 1 ELSE 0 END AS LLMA2_CURRENT_INTEREST_SPREAD_nan, 
+     LENGTH(ld.Delinquency_History_String) - LENGTH (REPLACE(ld.Delinquency_History_String, 'C' , '')) as LLMA2_C_IN_LAST_12_MONTHS, 
+     LENGTH(ld.Delinquency_History_String) - LENGTH (REPLACE(ld.Delinquency_History_String, '3' , '')) as LLMA2_30_IN_LAST_12_MONTHS, 
+     LENGTH(ld.Delinquency_History_String) - LENGTH (REPLACE(ld.Delinquency_History_String, '6' , '')) as LLMA2_60_IN_LAST_12_MONTHS, 
+     LENGTH(ld.Delinquency_History_String) - LENGTH (REPLACE(ld.Delinquency_History_String, '9' , '')) as LLMA2_90_IN_LAST_12_MONTHS, 
+     LENGTH(ld.Delinquency_History_String) - LENGTH (REPLACE(ld.Delinquency_History_String, 'F' , '')) as LLMA2_FC_IN_LAST_12_MONTHS, 
+     LENGTH(ld.Delinquency_History_String) - LENGTH (REPLACE(ld.Delinquency_History_String, 'R' , '')) as LLMA2_REO_IN_LAST_12_MONTHS, 
+     LENGTH(ld.Delinquency_History_String) - LENGTH (REPLACE(ld.Delinquency_History_String, '0' , '')) as LLMA2_0_IN_LAST_12_MONTHS, 
+     case when ld.Delinquency_History_String is null THEN 1 ELSE 0 END as LLMA2_HIST_LAST_12_MONTHS_MIS,    
+    LEAD (ld.Period, 1) OVER (partition by ld.loan_id order by ld.Period) as Period_next,
+    CASE WHEN (LEAD (ld.Period, 1) OVER (partition by ld.loan_id order by ld.Period) <> ld.Period+1) or (LEAD( ld.MBA_Delinquency_Status, 1) OVER (partition by ld.loan_id order by ld.Period) in ('S', 'T', 'X', 'Z')) 
+    THEN NULL ELSE LEAD( ld.MBA_Delinquency_Status, 1) OVER (partition by ld.loan_id order by ld.Period) END AS Delinquency_Status_next,
+    CASE WHEN (
+            ((ld.MBA_Delinquency_Status='C') and (LEAD( ld.MBA_Delinquency_Status, 1) OVER (partition by ld.loan_id order by ld.Period)='6'))
+            or 
+            ((ld.MBA_Delinquency_Status='C') and (LEAD( ld.MBA_Delinquency_Status, 1) OVER (partition by ld.loan_id order by ld.Period)='9'))
+            or
+            ((ld.MBA_Delinquency_Status='3') and (LEAD( ld.MBA_Delinquency_Status, 1) OVER (partition by ld.loan_id order by ld.Period)='9'))
+            or
+            ((ld.MBA_Delinquency_Status='R') and (LEAD( ld.MBA_Delinquency_Status, 1) OVER (partition by ld.loan_id order by ld.Period)<>'R'))
+            or
+            ((ld.MBA_Delinquency_Status='0') and (LEAD( ld.MBA_Delinquency_Status, 1) OVER (partition by ld.loan_id order by ld.Period)<>'0'))
+            ) THEN 1 ELSE 0 END AS Invalid_transitions,
+    im.num_modif as Num_Modif, CASE WHEN im.num_modif IS NULL THEN 1 ELSE 0 END AS num_modif_nan,
+    im.mod_per_from, im.mod_per_to, 
+    im.P_Rate_to_Mod, CASE WHEN im.P_Rate_to_Mod IS NULL THEN 1 ELSE 0 END AS P_Rate_to_Mod_nan,
+    im.Mod_Rate, CASE WHEN im.Mod_Rate IS NULL THEN 1 ELSE 0 END AS Mod_Rate_nan,
+    im.dif_rate, CASE WHEN im.dif_rate IS NULL THEN 1 ELSE 0 END AS dif_rate_nan,
+    im.P_Monthly_Pay, CASE WHEN im.P_Monthly_Pay IS NULL THEN 1 ELSE 0 END AS P_Monthly_Pay_nan,
+    im.Mod_Monthly_Pay, CASE WHEN im.Mod_Monthly_Pay IS NULL THEN 1 ELSE 0 END AS Mod_Monthly_Pay_nan,
+    im.dif_monthly_pay, CASE WHEN im.dif_monthly_pay IS NULL THEN 1 ELSE 0 END AS dif_monthly_pay_nan,
+    im.Capiatlization_Amt as CAPITALIZATION_AMT, CASE WHEN im.Capiatlization_Amt IS NULL THEN 1 ELSE 0 END AS Capitalization_Amt_nan,
+    mr.Mortgage_Rate, CASE WHEN mr.Mortgage_Rate IS NULL THEN 1 ELSE 0 END AS Mortgage_Rate_nan,
+    lm.FICO_Score_Origination, lm.Initial_Interest_Rate, lm.Original_LTV, lm.Original_Balance, 
+    lm.BackEnd_Ratio, CASE WHEN lm.BackEnd_Ratio IS NULL THEN 1 ELSE 0 END AS BACKEND_RATIO_nan,
+    lm.Original_Term, CASE WHEN lm.Original_Term IS NULL THEN 1 ELSE 0 END AS Original_Term_nan,
+    lm.Sale_Price, CASE WHEN lm.Sale_Price IS NULL THEN 1 ELSE 0 END AS SALE_PRICE_nan,
+    lm.Buydown_Flag, lm.Negative_Amortization_Flag, lm.Prepay_Penalty_Flag, 
+    lm.Prepay_Penalty_Term, CASE WHEN lm.Prepay_Penalty_Term IS NULL THEN 1 ELSE 0 END as PREPAY_PENALTY_TERM_nan,
+    lm.Occupancy_Type, lm.Product_Type, lm.Property_Type, lm.Loan_Purpose_Category,
+    lm.Documentation_Type, lm.Channel, lm.Loan_Type, 
+    lm.Number_of_Units, CASE WHEN lm.Number_of_Units IS NULL THEN 1 ELSE 0 END as NUMBER_OF_UNITS_nan,
+    lm.IO_Flag, 
+    lm.Margin, CASE WHEN lm.Margin IS NULL THEN 1 ELSE 0 END AS MARGIN_nan,
+    lm.Periodic_Rate_Cap, CASE WHEN lm.Periodic_Rate_Cap IS NULL THEN 1 ELSE 0 END AS PERIODIC_RATE_CAP_nan,
+    lm.Periodic_Rate_Floor, CASE WHEN lm.Periodic_Rate_Floor IS NULL THEN 1 ELSE 0 END AS PERIODIC_RATE_FLOOR_nan, 
+    lm.Lifetime_Rate_Cap, CASE WHEN lm.Lifetime_Rate_Cap IS NULL THEN 1 ELSE 0 END AS LIFETIME_RATE_CAP_nan,
+    lm.Lifetime_Rate_Floor, CASE WHEN lm.Lifetime_Rate_Floor IS NULL THEN 1 ELSE 0 END AS LIFETIME_RATE_FLOOR_nan,
+    lm.Rate_Reset_Frequency, CASE WHEN lm.Rate_Reset_Frequency IS NULL THEN 1 ELSE 0 END AS RATE_RESET_FREQUENCY_nan,
+    lm.Pay_Reset_Frequency, CASE WHEN lm.Pay_Reset_Frequency IS NULL THEN 1 ELSE 0 END AS PAY_RESET_FREQUENCY_nan,
+    lm.First_Rate_Reset_Period, CASE WHEN lm.First_Rate_Reset_Period IS NULL THEN 1 ELSE 0 END AS FIRST_RATE_RESET_PERIOD_nan,
+    lm.Convertible_Flag, lm.Pool_Insurance_Flag, lm.State, lm.Property_Zip,
+    CASE lm.Inferred_Collateral_Type WHEN 'P' THEN 1 ELSE 0  END as  LLMA2_PRIME, 
+    CASE lm.Inferred_Collateral_Type WHEN 'S' THEN 1 ELSE 0  END as  LLMA2_SUBPRIME,
+    CASE WHEN lm.Appraised_Value < lm.Sale_Price THEN 1 ELSE 0 END as LLMA2_APPVAL_LT_SALEPRICE, 
+    (lm.Initial_Interest_Rate - mr.Mortgage_Rate) as LLMA2_ORIG_RATE_SPREAD, CASE WHEN (lm.Initial_Interest_Rate - mr.Mortgage_Rate) IS NULL THEN 1 ELSE 0 END AS LLMA2_ORIG_RATE_SPREAD_nan,
+    irsi.AGI, CASE WHEN irsi.AGI IS NULL THEN 1 ELSE 0 END AS AGI_nan,
+    tur.ur, CASE WHEN tur.ur IS NULL THEN 1 ELSE 0 END AS UR_nan,
+    Substring(lm.origination_date, 0, 5) as origination_year,
+    (lm.Initial_Interest_Rate - mr1.Mortgage_Rate) as LLMA2_ORIG_RATE_ORIG_MR_SPREAD, 
+    CASE WHEN (lm.Initial_Interest_Rate - mr1.Mortgage_Rate) IS NULL THEN 1 ELSE 0 END AS LLMA2_ORIG_RATE_ORIG_MR_SPREAD_nan,
+    sum(case when (ld.Current_Interest_Rate < mr.Mortgage_Rate) then 1 else 0 end) OVER (partition by ld.loan_id order by ld.Period) as count_int_rate_less,
+    lm1.num_prime_zip, CASE WHEN lm1.num_prime_zip IS NULL THEN 1 ELSE 0 END AS num_prime_zip_nan
+    from "Servicing_LLMA2"."LoanDynamic" as ld 
+    inner join (select frld.row_count, --row_number() over (order by lm.loan_id) as row_count, 
+                lm.Loan_Id, lm."FICO_Score_Origination", lm."Initial_Interest_Rate", lm."Original_LTV", lm."Original_Balance", 
+                lm."BackEnd_Ratio",
+                lm."Original_Term", 
+                lm."Sale_Price", 
+                lm."Buydown_Flag", lm."Negative_Amortization_Flag", lm."Prepay_Penalty_Flag", lm."Prepay_Penalty_Term", lm."Occupancy_Type", lm."Product_Type", lm."Property_Type", lm."Loan_Purpose_Category",
+                lm."Documentation_Type", lm."Channel", lm."Loan_Type", lm."Number_of_Units", lm."IO_Flag", 
+                lm."Margin", 
+                lm."Periodic_Rate_Cap", 
+                lm."Periodic_Rate_Floor", 
+                lm."Lifetime_Rate_Cap", 
+                lm."Lifetime_Rate_Floor", 
+                lm."Rate_Reset_Frequency", 
+                lm."Pay_Reset_Frequency", 
+                lm."First_Rate_Reset_Period", 
+                lm."Convertible_Flag",  
+                lm."Pool_Insurance_Flag", lm."State", lm.Property_Zip, lm."Inferred_Collateral_Type", lm."Appraised_Value",
+                lm.origination_date --as original_origination_date,
+                from "Servicing_LLMA2"."LoanMaster" as lm
+                inner join public.TemporalFirstRecordLD as frld on (lm.Loan_Id = frld.Loan_Id) --and frld.last_period>251
+                inner join "MacroEconomicData"."LAUS_STATE_FIPS" as lsf on (lm.state = lsf.state)
+                where lm."FICO_Score_Origination">0 and lm."Original_Balance">0 and lm."Initial_Interest_Rate">0 and lm."Original_LTV">0
+                and length(lm.property_zip)=5                
+                )
+    as lm on (ld.Loan_Id = lm.Loan_Id)
+    left outer join public.interm_modif as im on (ld.Loan_Id = im.loan_id and ld."Period" >= im.mod_per_from and ld."Period" <= im.mod_per_to)
+    left outer join (
+            select irsi.geo_code, irsi.year, irsi."STATE", count(*) as nrows, min(agi) as agi_min, max(agi) as agi_max, avg(agi) agi_avg,
+            case when (min(agi)=0) then max(agi) else avg(agi) end as agi
+            from "IRSIncome"."IRS_SOI" as irsi where irsi."AGI_STUB"='0'
+            and irsi.agi is not null
+            group by geo_code, year, state) as irsi on (lm.Property_Zip = irsi.geo_code and DATE_PART('YEAR' , ((ld.AsofMonth)::VARCHAR)::Date)= irsi.year and irsi."STATE"= lm.state)
+    left outer join (select * from "MacroEconomicData"."MortgageRates" as mr where mr."Rate_Name" = 'FRM30' and mr."Rate_Source"='FreddieMac') as mr on (ld."AsOfMonth"= mr."Asofmon")
+    left outer join (select * from "MacroEconomicData"."MortgageRates" as mr where mr."Rate_Name" = 'FRM30' and mr."Rate_Source"='FreddieMac') as mr1 on (((lm.origination_date * 100 + 1)::VARCHAR)::Date = mr1."Asofmon")
+    left outer join (
+            select lm.property_zip, count(*) as num_prime_zip
+            from "Servicing_LLMA2"."LoanMaster" as lm 
+            where lm."Inferred_Collateral_Type" = 'P'  and
+            lm."FICO_Score_Origination">0 and lm."Original_Balance">0 and lm."Initial_Interest_Rate">0 and lm."Original_LTV">0
+            and length(lm.property_zip)=5
+            group by lm.property_zip
+            ) as lm1 on (lm.property_zip=lm1.property_zip)
+    left join public."TemporalUR" as tur  on (tur.year=DATE_PART('YEAR' , ((ld.AsofMonth)::VARCHAR)::Date)::int and tur.month::int=DATE_PART('MONTH' , ((ld.AsofMonth)::VARCHAR)::Date) and lm.state=tur.state and lm.property_zip=tur.property_zip)
+    """ 
+    if (loan_from == 0 and period_from==0):  #default values, retrieves all from database...
+        args_string = " order by ld.Loan_ID asc, ld.Period asc;"
+    elif (loan_from > 0 and period_from>0):
+        args_string = " where lm.row_count>=%s and lm.row_count<=%s " \
+                      " and ld.period>=%s and ld.period<=%s" \
+                      " order by ld.Loan_ID asc, ld.Period asc;" %(str(loan_from), str(loan_to), str(period_from), str(period_to+1))
+    elif (loan_from > 0 and period_from==0):
+        args_string = """ where lm.row_count>=%s and lm.row_count<=%s                  
+                      order by ld.Loan_ID asc, ld.Period asc;""" %(str(loan_from), str(loan_to))
+    elif (loan_from == 0 and period_from>0):
+        args_string = " where ld.period>=%s and ld.period<=%s " \
+                      " order by ld.Loan_ID asc, ld.Period asc;" %(str(period_from), str(period_to+1))
+
+    return  mystring + args_string
         
+def retrieve_windataset(period_from, period_to, loan_from, loan_to, retrieve_dir, filename, chunksize):    
+    
+    conn = vertica_connection()
+    query = winyear_query(period_from, period_to, loan_from, loan_to)
+    if not os.path.exists(os.path.join(RAW_DIR, retrieve_dir)): #os.path.exists
+        os.makedirs(os.path.join(RAW_DIR, retrieve_dir))
+    query_file = Path(os.path.join(RAW_DIR, retrieve_dir, filename + ".txt"))
+    execute_query(conn, query,  query_file, chunksize=chunksize)
+    # conn.commit()     
+    conn.close()
+
+def update_parser(parser):
+    """Parse the arguments from the CLI and update the parser."""    
+    parser.add_argument(
+        '--retrieve_step',
+        type=str,
+        default='windataset', #
+        help='To execute a retrieveng method')    
+    
+    #this is for retrieve_windataset:
+    parser.add_argument(
+        '--period_from',
+        type=int,        
+        default=151,
+        help='Init Period, the default value includes all periods')
+    parser.add_argument(
+        '--period_to',
+        type=int,        
+        default=155,
+        help='End Period, the default value includes all periods') 
+    parser.add_argument(
+        '--loan_number_from',
+        type=int,        
+        default=1,
+        help='Init Loan Number to avoid repetitions')
+    parser.add_argument(
+        '--loan_number_to',
+        type=int,        
+        default=50,
+        help='End Loan Number to avoid repetitions')
+    parser.add_argument(
+        '--retrieve_dir',
+        type=str,
+        default='chuncks_random_c1mill',
+        help='Directory to save raw data inside data/raw/. If it does not exist, it will be created...')    
+    parser.add_argument(
+        '--filename',
+        type=str,
+        default='dynstat_random',
+        help='File name for raw data inside data/raw/[retrieve_dir]. If it does not exist, it will be created, otherwise it will open to append')    
+    parser.add_argument(
+        '--retrieve_chunksize',
+        type=int,
+        default=500000,
+        help='Chunk size to put into the h5 file...')    
+            
+    return parser.parse_known_args()
+    
 def main(project_dir):
     """ 
     This module is in charge of::
@@ -523,6 +725,15 @@ def main(project_dir):
         - Data Sampling.
     """        
     logger.info('Retrieving DataFrame from Raw Data, Data Sampling')
+    FLAGS, UNPARSED = update_parser(argparse.ArgumentParser())    
+    print("UNPARSED", UNPARSED)    
+        
+    if FLAGS.retrieve_step == 'windataset':
+        startTime = datetime.now()                
+        retrieve_windataset(FLAGS.period_from, FLAGS.period_to, FLAGS.loan_number_from, FLAGS.loan_number_to, FLAGS.retrieve_dir, FLAGS.filename, FLAGS.retrieve_chunksize)
+        print('Retrieving - Time: ', datetime.now() - startTime)
+    else: 
+        print('Invalid retrieve_step...')
 
 
 if __name__ == '__main__':        

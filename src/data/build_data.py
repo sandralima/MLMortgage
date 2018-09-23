@@ -602,7 +602,7 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, target_path, train_pe
         train_index = 0
         valid_index = 0
         test_index = 0
-        for chunk in pd.read_csv(file_path, chunksize = chunksize, sep=',', low_memory=False):    
+        for chunk in pd.read_csv(file_path, chunksize = chunksize, sep=';', low_memory=False):    
             print('chunk: ', i, ' chunk size: ', chunk.shape[0])
             log_file.write('chunk: %d, chunk size: %d \n' % (i, chunk.shape[0]))
             chunk.columns = chunk.columns.str.upper()                            

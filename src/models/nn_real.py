@@ -20,7 +20,6 @@ sys.path.insert(0, os.path.join(Path(os.getcwd()).parents[1], 'src', 'data'))
 # from build_data import encode_sparsematrix
 import make_dataset as md
 
-
 import numpy as np
 import tensorflow as tf
 from tensorboard import summary as summary_lib
@@ -1288,8 +1287,6 @@ def main(_):
         print('RAM after build', psutil.virtual_memory()) #  physical memory usage
         FLAGS.log_file.write('RAM  after build: %s\r\n' % str(psutil.virtual_memory()))
         run_model(graph, 'testing_data', i,  FLAGS, DATA)      
-        print('RAM after run model: ', psutil.virtual_memory()) #  physical memory usage
-        FLAGS.log_file.write('RAM  after run model: %s\r\n' % str(psutil.virtual_memory()))
     #FLAGS = FLAGS_setting(FLAGS, 1)
     #graph = build_graph(architecture, FLAGS)        
     #run_model(graph, 'Data1-100_' + FLAGS.name, 1,  FLAGS, DATA)    
@@ -1300,7 +1297,7 @@ def update_parser(parser):
     parser.add_argument(
         '--epoch_num',
         type=int,
-        default=10,
+        default=15,
         help='Number of epochs to run trainer on the dataset.')
     parser.add_argument(
         '--dropout_keep',

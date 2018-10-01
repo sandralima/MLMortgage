@@ -56,7 +56,7 @@ class DataBatch(object):
             files_dict = {}  
             for i, file_path in zip(range(len(self.all_files)), self.all_files):    
                 dataset_file = pd.HDFStore(file_path) # the first file of the path                
-                dataset_features = dataset_file.select(self.dtype+'/features', start=0).values #, stop=5000000
+                dataset_features = dataset_file.select(self.dtype+'/features', start=0, stop=500000).values #, stop=500000
                 nrows = dataset_features.shape[0] # dataset_file.get_storer(self.dtype + '/features').nrows
                 print('dataset_features: ', dataset_features.shape)
                 dataset_labels = dataset_file.select(self.dtype+'/labels', start=0, stop=nrows).values
@@ -77,7 +77,7 @@ class DataBatch(object):
             for z in range(repeats):
                 for file_path in self.all_files:
                     dataset_file = pd.HDFStore(file_path) # the first file of the path                    
-                    dataset_features = dataset_file.select(self.dtype+'/features', start=0).values # , stop=5000000
+                    dataset_features = dataset_file.select(self.dtype+'/features', start=0, stop=500000).values # , stop=5000000
                     nrows = dataset_features.shape[0] # dataset_file.get_storer(self.dtype + '/features').nrows
                     dataset_labels = dataset_file.select(self.dtype+'/labels', start=0, stop=nrows).values
                     files_dict[index] = {'path': file_path, 'nrows': nrows, 
@@ -239,12 +239,12 @@ class DataBatch(object):
         
         #temp_features = pd.DataFrame(None,columns=self.features_list)        
         #temp_labels = pd.DataFrame(None,columns=self.labels_list)  
-        temp_features = np.empty((0,len(self.features_list)))
-        temp_labels = np.zeros((0,len(self.labels_list)))
+        temp_features = np.empty((batch_size,len(self.features_list)))
+        temp_labels = np.zeros((batch_size,len(self.labels_list)))
         random_batch = np.array(list(self._loan_random.get_batch(batch_size)))
         startTime = datetime.now()       
         #partial_number = 0         
-        orb_size = 0
+        orb_size = 0        
         for k, v in self._dict.items():
             try:                
                 #startTime1 = datetime.now()                
@@ -265,8 +265,10 @@ class DataBatch(object):
                     #temp_features = np.concatenate((temp_features, self.dataset.select(self.dtype+'/features', where=orb).values)) #this way is heavy
                     #temp_labels = np.concatenate((temp_labels, self.dataset.select(self.dtype+'/labels', where=orb).values))
 
-                    df_features = v['dataset_features'][orb, :]
-                    df_labels = v['dataset_labels'][orb, :]
+                    # df_features = v['dataset_features'][orb, :]
+                    temp_features[orb_size : orb_size + len(orb), :] = v['dataset_features'][orb, :]
+                    # df_labels = v['dataset_labels'][orb, :]
+                    temp_labels[orb_size : orb_size + len(orb), :] = v['dataset_labels'][orb, :]                    
                     # df_features = v['dataset'].select(self.dtype+'/features', where=orb)
                     #df_labels = v['dataset'].select(self.dtype+'/labels', where=orb)
                     
@@ -276,8 +278,8 @@ class DataBatch(object):
                     #print('File: ', k, 'Time for one file lecture: ', datetime.now() - startTime2, ' records: ',  len(orb))
                     
 #                    startTime3 = datetime.now()
-                    temp_features = np.concatenate((temp_features, df_features))
-                    temp_labels = np.concatenate((temp_labels, df_labels))
+                    # temp_features = np.concatenate((temp_features, df_features))
+                    # temp_labels = np.concatenate((temp_labels, df_labels))
 #                    print('File: ', k, 'Time for append: ', datetime.now() - startTime3, ' records: ',  len(orb))
                     
                     # print('File ', k, ': ',file_path, ' Time for one file lecture/append: ', datetime.now() - startTime1, ' records: ',  len(orb))            

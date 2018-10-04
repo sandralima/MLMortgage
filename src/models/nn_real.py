@@ -1267,7 +1267,7 @@ def main(_):
     #FLAGS.valid_dir = 'c100th_valid_set' #'c100th_valid_set' # 'chuncks_random_c1mill_valid' # chunks_all_800th 'valid_set_800th'
     #FLAGS.test_dir = 'c100th_test_set' #'c100th_test_set' # 'chuncks_random_c1mill_test' # 'test_set_800th'
     # training_dict = md.get_dataset_metadata(train_dir)
-    DATA = md.get_h5_data(FLAGS.train_dir, FLAGS.valid_dir, FLAGS.test_dir) 
+    DATA = md.get_h5_data(PRO_DIR, FLAGS.train_dir, FLAGS.valid_dir, FLAGS.test_dir) 
     
 #    for file_path in glob.glob(os.path.join(PRO_DIR, subdir_name,"*.h5")):  
 #        file_name = os.path.basename(file_path)

@@ -505,7 +505,7 @@ def _float_feature(value):
   return tf.train.Feature(float_list=tf.train.FloatList(value=value))
 
 def tag_chunk(tag, label, chunk, chunk_periods, tag_period, log_file, with_index, tag_index, hdf=None, tfrec=None):
-    inter_periods = list(chunk_periods.intersection(set(range(tag_period[0], tag_period[1]+1))))            
+    inter_periods = list(chunk_periods.intersection(set(range(tag_period[0], tag_period[1]+1))))
     log_file.write('Periods corresponding to ' + tag +' period: %s\r\n' % str(inter_periods))
     p_chunk = chunk.loc[(slice(None), slice(None), slice(None), inter_periods), :]
     log_file.write('Records for ' + tag +  ' Set - Number of rows: %d\r\n' % (p_chunk.shape[0]))
@@ -634,11 +634,16 @@ def prepro_chunk(file_name, file_path, chunksize, label, log_file, nan_cols, cat
         if chunk.isnull().any().any(): raise ValueError('There are null values...File: ' + file_name)   
         
         chunk_periods = set(list(chunk.index.get_level_values('PERIOD')))
-        
-        train_index = tag_chunk('train', label, chunk, chunk_periods, train_period, log_file, with_index, train_index, hdf=hdf, tfrec=tfrec[0])
-        valid_index = tag_chunk('valid', label, chunk, chunk_periods, valid_period, log_file, with_index, valid_index, hdf=hdf, tfrec=tfrec[1])
-        test_index = tag_chunk('test', label, chunk, chunk_periods, test_period, log_file, with_index, test_index, hdf=hdf, tfrec=tfrec[2])
-    
+        print(tfrec)
+        if (tfrec!=None):
+            train_index = tag_chunk('train', label, chunk, chunk_periods, train_period, log_file, with_index, train_index, tfrec=tfrec[0])
+            valid_index = tag_chunk('valid', label, chunk, chunk_periods, valid_period, log_file, with_index, valid_index, tfrec=tfrec[1])
+            test_index = tag_chunk('test', label, chunk, chunk_periods, test_period, log_file, with_index, test_index, tfrec=tfrec[2])
+        elif (hdf!=None):
+            train_index = tag_chunk('train', label, chunk, chunk_periods, train_period, log_file, with_index, train_index, hdf=hdf)
+            valid_index = tag_chunk('valid', label, chunk, chunk_periods, valid_period, log_file, with_index, valid_index, hdf=hdf)
+            test_index = tag_chunk('test', label, chunk, chunk_periods, test_period, log_file, with_index, test_index, hdf=hdf)
+                
         
         inter_periods = list(chunk_periods.intersection(set(range(test_period[1]+1,355))))    
         log_file.write('Periods greater than test_period: %s\r\n' % str(inter_periods))
@@ -652,7 +657,7 @@ def prepro_chunk(file_name, file_path, chunksize, label, log_file, nan_cols, cat
     
     return train_index, valid_index, test_index
 
-def allfeatures_prepro_file(file_path, raw_dir, file_name, target_path, train_period, valid_period, test_period, log_file, dividing='percentage', chunksize=500000, 
+def allfeatures_prepro_file(RAW_DIR, file_path, raw_dir, file_name, target_path, train_period, valid_period, test_period, log_file, dividing='percentage', chunksize=500000, 
                             refNorm=True, label='DELINQUENCY_STATUS_NEXT', with_index=True, output_hdf=True):
     descriptive_cols = [
 #        'LOAN_ID',
@@ -760,6 +765,7 @@ def allfeatures_prepro_file(file_path, raw_dir, file_name, target_path, train_pe
     if (output_hdf == True):
         with  pd.HDFStore(target_path +'-pp.h5', complib='lzo', complevel=9) as hdf: #complib='lzo', complevel=9
             
+            print('generating: ', target_path +'-pp.h5')
             train_index, valid_index, test_index = prepro_chunk(file_name, file_path, chunksize, label, log_file, nan_cols, categorical_cols, descriptive_cols, 
                                                                 time_cols, robust_cols, minmax_cols, robust_normalizer, minmax_normalizer, dist_file, with_index, 
                                                                 refNorm, train_period, valid_period, test_period, hdf=hdf, tfrec=None)            
@@ -977,7 +983,7 @@ def slice_table_sets(prep_dir, set_dir, tag, target_name, input_chunk_size=1200,
         if hdf_target.is_open: hdf_target.close()
         print(e)
                        
-def get_h5_dataset(train_dir, valid_dir, test_dir, train_period=[121, 316], valid_period=[317,323], test_period=[324, 351]):
+def get_h5_dataset(PRO_DIR, train_dir, valid_dir, test_dir, train_period=[121, 316], valid_period=[317,323], test_period=[324, 351]):
     train_path = os.path.join(PRO_DIR, train_dir)
     valid_path = os.path.join(PRO_DIR, valid_dir)
     test_path = os.path.join(PRO_DIR, test_dir)    
@@ -987,7 +993,7 @@ def get_h5_dataset(train_dir, valid_dir, test_dir, train_period=[121, 316], vali
     return DATA
 
     
-def allfeatures_preprocessing(raw_dir, train_num, valid_num, test_num, dividing='percentage', chunksize=500000, refNorm=True, with_index=True, output_hdf=True):            
+def allfeatures_preprocessing(RAW_DIR, PRO_DIR, raw_dir, train_num, valid_num, test_num, dividing='percentage', chunksize=500000, refNorm=True, with_index=True, output_hdf=True):            
 
     for file_path in glob.glob(os.path.join(RAW_DIR, raw_dir,"*.txt")):  
         file_name = os.path.basename(file_path)
@@ -999,7 +1005,7 @@ def allfeatures_preprocessing(raw_dir, train_num, valid_num, test_num, dividing=
         print('Preprocessing File: ' + file_path)
         log_file.write('Preprocessing File:  %s\r\n' % file_path)
         startTime = datetime.now()        
-        allfeatures_prepro_file(file_path, raw_dir, file_name, target_path, train_num, valid_num, test_num, log_file, dividing=dividing, chunksize=chunksize, 
+        allfeatures_prepro_file(RAW_DIR, file_path, raw_dir, file_name, target_path, train_num, valid_num, test_num, log_file, dividing=dividing, chunksize=chunksize, 
                                 refNorm=refNorm, with_index=with_index, output_hdf=output_hdf)          
         startTime = datetime.now() - startTime
         print('Preprocessing Time: ', startTime)     
@@ -1145,8 +1151,8 @@ def main(project_dir):
         #allfeatures_preprocessing('chuncks_random_c1mill', [121, 279], [280,285], [286, 304], dividing='percentage', chunksize=500000, refNorm=True, with_index=True)  
         if not os.path.exists(os.path.join(PRO_DIR, FLAGS.prepro_dir)): #os.path.exists
                 os.makedirs(os.path.join(PRO_DIR, FLAGS.prepro_dir))
-        allfeatures_preprocessing(FLAGS.prepro_dir, FLAGS.train_period, FLAGS.valid_period, FLAGS.test_period, dividing='percentage', 
-                                  chunksize=FLAGS.prepro_chunksize, refNorm=FLAGS.ref_norm, with_index=FLAGS.prepro_with_index, output_hdf=False)        
+        allfeatures_preprocessing(RAW_DIR, PRO_DIR, FLAGS.prepro_dir, FLAGS.train_period, FLAGS.valid_period, FLAGS.test_period, dividing='percentage', 
+                                  chunksize=FLAGS.prepro_chunksize, refNorm=FLAGS.ref_norm, with_index=FLAGS.prepro_with_index, output_hdf=True)        
         print('Preprocessing - Time: ', datetime.now() - startTime)
     elif FLAGS.prepro_step == 'slicing':        
         for i in range(len(FLAGS.slice_tag)):

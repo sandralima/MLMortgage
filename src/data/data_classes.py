@@ -49,6 +49,8 @@ class DataBatch(object):
             self.period_range =  period_array #set(range(period_array[0], period_array[1]+1))
             #self.period_features = set(list(self.dataset['features'].index.get_level_values(2)))
             #self.period_inter = self.period_features.intersection(self.period_range)            
+        else: #Dataset empty!
+            self._dict = None
 
 
     def get_metadata_dataset(self):
@@ -242,7 +244,7 @@ class DataBatch(object):
         temp_features = np.empty((batch_size,len(self.features_list)))
         temp_labels = np.zeros((batch_size,len(self.labels_list)))
         random_batch = np.array(list(self._loan_random.get_batch(batch_size)))
-        startTime = datetime.now()       
+        #startTime = datetime.now()       
         #partial_number = 0         
         orb_size = 0        
         for k, v in self._dict.items():
@@ -294,7 +296,7 @@ class DataBatch(object):
         temp_labels = temp_labels[permutation]        
         #np.random.shuffle(temp_features)
         #np.random.shuffle(temp_labels)
-        print('Time for Getting ', orb_size, ' random elements: ', datetime.now() - startTime)                    
+        #print('Time for Getting ', orb_size, ' random elements: ', datetime.now() - startTime)                    
         return temp_features, temp_labels, np.array([1.0], dtype=np.dtype('float32'))  # temp_weights    
     
     
@@ -439,7 +441,7 @@ class Dataset(object):
             self.validation = Data(valid_tuple)
             self.test = Data(test_tuple)
             self.feature_columns = feature_columns
-        elif (train_path==None or valid_path==None or test_path==None):  
+        elif (train_path==None and valid_path==None and test_path==None):  
             raise ValueError('DataBatch: The path for at least one set was not loaded!')
         else:
             self.train = DataBatch(train_path, train_period, dtype='train') 

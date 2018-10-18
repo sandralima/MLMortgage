@@ -633,6 +633,8 @@ def prepro_chunk(file_name, file_path, chunksize, label, log_file, nan_cols, cat
         
         if chunk.isnull().any().any(): raise ValueError('There are null values...File: ' + file_name)   
         
+        #chunk.to_csv(file_path[:-4] +'-pp.csv', mode='a', index=False) 
+        
         chunk_periods = set(list(chunk.index.get_level_values('PERIOD')))
         print(tfrec)
         if (tfrec!=None):
@@ -984,9 +986,9 @@ def slice_table_sets(prep_dir, set_dir, tag, target_name, input_chunk_size=1200,
         print(e)
                        
 def get_h5_dataset(PRO_DIR, train_dir, valid_dir, test_dir, train_period=[121, 316], valid_period=[317,323], test_period=[324, 351]):
-    train_path = os.path.join(PRO_DIR, train_dir)
-    valid_path = os.path.join(PRO_DIR, valid_dir)
-    test_path = os.path.join(PRO_DIR, test_dir)    
+    train_path = os.path.join(PRO_DIR, train_dir) if train_dir is not None else None
+    valid_path = os.path.join(PRO_DIR, valid_dir) if valid_dir is not None else None
+    test_path = os.path.join(PRO_DIR, test_dir) if test_dir is not None else None
     DATA = data_classes.Dataset(train_path=train_path, valid_path=valid_path, test_path=test_path, 
                                 train_period=train_period, valid_period=valid_period, test_period=test_period)
         

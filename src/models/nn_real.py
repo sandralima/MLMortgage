@@ -866,7 +866,7 @@ def batch_training(sess, writers, name, net_number, FLAGS, DATA):
                 else:                
                     _ = sess.run(['train'], feed_dict=batch_dict)                
                     
-                batch_metrics_train = get_metrics(sess, batch_dict)        
+                batch_metrics_train = get_metrics(sess, batch_dict) #it should not call to reset_and_update, this is only for one epoch and between valid and training.  
                 epoch_metrics_train = batch_stats(epoch_metrics_train, batch_metrics_train)             
                 batch_time = datetime.now() - batch_time
                 print('Batch Time: ', batch_time) 

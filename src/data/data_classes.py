@@ -24,17 +24,15 @@ class DataBatch(object):
         elif (path!=None):            
             self.features, self.labels = None, None
             self.h5_path = path
-            self.dtype = dtype
-            self._total_num_examples = 0
+            self.dtype = dtype            
             self.all_files = glob.glob(os.path.join(self.h5_path, "*.h5"))                                    
-            
-            if dtype == 'train':                
-                self._dict = self.get_metadata_dataset_repeats(1)
-                self._loan_random = rp.CustomRandom(self._total_num_examples) # np.random.RandomState(RANDOM_SEED)                
-            else:
-                self._dict = self.get_metadata_dataset()
+
+            self._dict = self.get_metadata_dataset()
             if (self._dict == None):
                 raise ValueError('DataBatch: The dictionary was not loaded!')
+            
+            if dtype == 'train':                                
+                self._loan_random = rp.CustomRandom(self._total_num_examples) # np.random.RandomState(RANDOM_SEED)                
             
             self.dataset_index = 0 #to record the access to files
             self._file_index = 0 #to record the sequential order inside a file               
@@ -53,45 +51,62 @@ class DataBatch(object):
             self._dict = None
 
 
+#    def get_metadata_dataset(self):
+#        try:                          
+#            files_dict = {}  
+#            for i, file_path in zip(range(len(self.all_files)), self.all_files):    
+#                dataset_file = pd.HDFStore(file_path) # the first file of the path                
+#                dataset_features = dataset_file.select(self.dtype+'/features', start=0, stop=500000).values #, stop=500000
+#                nrows = dataset_features.shape[0] # dataset_file.get_storer(self.dtype + '/features').nrows
+#                print('dataset_features: ', dataset_features.shape)
+#                dataset_labels = dataset_file.select(self.dtype+'/labels', start=0, stop=nrows).values
+#                files_dict[i] = {'path': file_path, 'nrows': nrows, 
+#                                 'init_index': self._total_num_examples, 'end_index': self._total_num_examples + nrows,
+#                                  'dataset' : dataset_file, 'dataset_features' : dataset_features, 'dataset_labels': dataset_labels}        
+#                self._total_num_examples += nrows
+#                print('dict: ', files_dict[i], ' accumulated rows: ', self._total_num_examples)
+#                # if dataset.is_open: dataset.close()
+#            return files_dict        
+#        except  Exception  as e:        
+#            raise ValueError('Error in retrieving the METADATA object: ' + str(e))    
+
     def get_metadata_dataset(self):
         try:                          
             files_dict = {}  
+            self._total_num_examples = 0
             for i, file_path in zip(range(len(self.all_files)), self.all_files):    
-                dataset_file = pd.HDFStore(file_path) # the first file of the path                
-                dataset_features = dataset_file.select(self.dtype+'/features', start=0, stop=500000).values #, stop=500000
-                nrows = dataset_features.shape[0] # dataset_file.get_storer(self.dtype + '/features').nrows
-                print('dataset_features: ', dataset_features.shape)
-                dataset_labels = dataset_file.select(self.dtype+'/labels', start=0, stop=nrows).values
-                files_dict[i] = {'path': file_path, 'nrows': nrows, 
+                with pd.HDFStore(file_path) as dataset_file:                
+                    dataset_features = dataset_file.select(self.dtype+'/features', start=0).values #, stop=500000
+                    nrows = dataset_features.shape[0] # dataset_file.get_storer(self.dtype + '/features').nrows
+                    dataset_labels = dataset_file.select(self.dtype+'/labels', start=0, stop=nrows).values
+                    files_dict[i] = {'path': file_path, 'nrows': nrows, 
                                  'init_index': self._total_num_examples, 'end_index': self._total_num_examples + nrows,
-                                  'dataset' : dataset_file, 'dataset_features' : dataset_features, 'dataset_labels': dataset_labels}        
-                self._total_num_examples += nrows
-                print('dict: ', files_dict[i], ' accumulated rows: ', self._total_num_examples)
-                # if dataset.is_open: dataset.close()
+                                  'dataset_features' : dataset_features, 'dataset_labels': dataset_labels}        
+                    self._total_num_examples += nrows                    
             return files_dict        
         except  Exception  as e:        
             raise ValueError('Error in retrieving the METADATA object: ' + str(e))    
-
-    def get_metadata_dataset_repeats(self, repeats):
-        try:                          
-            files_dict = {}  
-            index = 0
-            for z in range(repeats):
-                for file_path in self.all_files:
-                    dataset_file = pd.HDFStore(file_path) # the first file of the path                    
-                    dataset_features = dataset_file.select(self.dtype+'/features', start=0, stop=500000).values # , stop=5000000
-                    nrows = dataset_features.shape[0] # dataset_file.get_storer(self.dtype + '/features').nrows
-                    dataset_labels = dataset_file.select(self.dtype+'/labels', start=0, stop=nrows).values
-                    files_dict[index] = {'path': file_path, 'nrows': nrows, 
-                                 'init_index': self._total_num_examples, 'end_index': self._total_num_examples + nrows,
-                                  'dataset' : dataset_file, 'dataset_features' : dataset_features, 'dataset_labels': dataset_labels}                            
-                    self._total_num_examples += nrows
-                    print('dict: ', files_dict[index], ' total rows: ', self._total_num_examples)
-                    index += 1
-                    # if dataset.is_open: dataset.close()
-            return files_dict        
-        except  Exception  as e:        
-            raise ValueError('Error in retrieving the METADATA object: ' + str(e))            
+            
+#    def get_metadata_dataset_repeats(self, repeats):
+#        try:                          
+#            files_dict = {}  
+#            index = 0
+#            for z in range(repeats):
+#                for file_path in self.all_files:
+#                    dataset_file = pd.HDFStore(file_path) # the first file of the path                    
+#                    dataset_features = dataset_file.select(self.dtype+'/features', start=0, stop=500000).values # , stop=5000000
+#                    nrows = dataset_features.shape[0] # dataset_file.get_storer(self.dtype + '/features').nrows
+#                    dataset_labels = dataset_file.select(self.dtype+'/labels', start=0, stop=nrows).values
+#                    files_dict[index] = {'path': file_path, 'nrows': nrows, 
+#                                 'init_index': self._total_num_examples, 'end_index': self._total_num_examples + nrows,
+#                                  'dataset' : dataset_file, 'dataset_features' : dataset_features, 'dataset_labels': dataset_labels}                            
+#                    self._total_num_examples += nrows
+#                    print('dict: ', files_dict[index], ' total rows: ', self._total_num_examples)
+#                    index += 1
+#                    # if dataset.is_open: dataset.close()
+#            return files_dict        
+#        except  Exception  as e:        
+#            raise ValueError('Error in retrieving the METADATA object: ' + str(e))            
 
     # this method batches the training set in lots of size batch_size, if it reaches the end, concatenates the tail with the front and continues until the num_epoch.
     def next_batch(self, batch_size):

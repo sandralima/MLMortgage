@@ -990,11 +990,11 @@ def slice_table_sets(prep_dir, set_dir, tag, target_name, input_chunk_size=1200,
         if hdf_target.is_open: hdf_target.close()
         print(e)
                        
-def get_h5_dataset(PRO_DIR, train_dir, valid_dir, test_dir, train_period=[121, 316], valid_period=[317,323], test_period=[324, 351]):
+def get_h5_dataset(PRO_DIR, architecture, train_dir, valid_dir, test_dir, train_period=[121, 316], valid_period=[317,323], test_period=[324, 351]):
     train_path = os.path.join(PRO_DIR, train_dir) if train_dir is not None else None
     valid_path = os.path.join(PRO_DIR, valid_dir) if valid_dir is not None else None
     test_path = os.path.join(PRO_DIR, test_dir) if test_dir is not None else None
-    DATA = data_classes.Dataset(train_path=train_path, valid_path=valid_path, test_path=test_path, 
+    DATA = data_classes.Dataset(architecture, train_path=train_path, valid_path=valid_path, test_path=test_path, 
                                 train_period=train_period, valid_period=valid_period, test_period=test_period)
         
     return DATA

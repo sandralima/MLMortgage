@@ -41,7 +41,42 @@ def get_metadata_dataset(dtype):
         return files_dict        
     except  Exception  as e:        
         raise ValueError('Error in retrieving the METADATA object: ' + str(e))    
+        
+        
+def get_metadata_dataset1(dtype, max_rows, num_feat, num_class):
+    try:                          
+        files_dict = {}  
+        _total_num_examples = 0        
+        dataset_features = np.empty((max_rows, num_feat), dtype=np.float32)
+        dataset_labels = np.empty((max_rows,num_class), dtype=np.int8)            
+        h5_path = os.path.join(PRO_DIR, 'chuncks_random_c1mill/cmill_AWS')
+        all_files = glob.glob(os.path.join(h5_path, "*.h5"))
+        for i, file_path in zip(range(len(all_files)), all_files):    
+            with pd.HDFStore(file_path) as dataset_file:                
+                print(file_path, '...to load')
+                total_rows = dataset_file.get_storer(dtype + '/features').nrows
+                if (total_rows <= max_rows):
+                    max_rows -= total_rows
+                    dataset_features[_total_num_examples : _total_num_examples + total_rows, :] = dataset_file.select(dtype+'/features', start=0).values #, stop=500000                        
+                    dataset_labels[_total_num_examples : _total_num_examples + total_rows, :] = dataset_file.select(dtype+'/labels', start=0, stop=total_rows).values
+                else:
+                    total_rows = max_rows
+                    dataset_features[_total_num_examples : _total_num_examples + total_rows, :] = dataset_file.select(dtype+'/features', start=0, stop=total_rows).values #, stop=500000
+                    dataset_labels[_total_num_examples : _total_num_examples + total_rows, :] = dataset_file.select(dtype+'/labels', start=0, stop=total_rows).values
+                                                                                                    
+                _total_num_examples += total_rows                    
+                print(file_path, ' loaded in RAM')
+                if (total_rows == max_rows):
+                    break
 
-train_dict = get_metadata_dataset('train')
+        files_dict[0] = {'nrows': _total_num_examples, 'init_index': 0, 'end_index': _total_num_examples,
+         'dataset_features' : dataset_features, 'dataset_labels': dataset_labels}        
 
+        return files_dict        
+    except  Exception  as e:        
+        raise ValueError('Error in retrieving the METADATA object: ' + str(e))            
+
+#train_dict = get_metadata_dataset('train')
+        
+train_dict = get_metadata_dataset1('train', 500000, 257, 7)
 print(train_dict)

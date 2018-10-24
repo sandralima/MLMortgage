@@ -20,9 +20,9 @@ def get_data(num_examples, valid_num, test_num, weight_flag=False, dataset_name=
     return data
 
 
-def get_h5_data(PRO_DIR, train_dir, valid_dir, test_dir, train_period=[121, 279], valid_period=[280,285], test_period=[286, 304]):
+def get_h5_data(PRO_DIR, architecture, train_dir, valid_dir, test_dir, train_period=[121, 279], valid_period=[280,285], test_period=[286, 304]):
     try:              
-        return bd.get_h5_dataset(PRO_DIR, train_dir, valid_dir, test_dir, train_period=train_period, valid_period=valid_period, test_period=test_period)
+        return bd.get_h5_dataset(PRO_DIR, architecture, train_dir, valid_dir, test_dir, train_period=train_period, valid_period=valid_period, test_period=test_period)
     except  Exception  as e:        
         raise ValueError('Error in retrieving the DATA object: ' + train_dir + ' , ' + valid_dir + ' , ' +  test_dir + ' ' + str(e))
 

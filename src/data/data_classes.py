@@ -7,6 +7,7 @@ import math
 import glob
 import random_permutation as rp
 from datetime import datetime
+import sys
 
 RANDOM_SEED = 123 # eliminate for taking from the clock!
 
@@ -14,7 +15,7 @@ RANDOM_SEED = 123 # eliminate for taking from the clock!
 class DataBatch(object):
     """ABC."""
 
-    def __init__(self, path, period_array, in_tuple=None, dtype='train'):
+    def __init__(self, architecture, path, period_array, in_tuple=None, dtype='train'):
         if (in_tuple!=None):
             self.orig = Data(in_tuple)
             self.features, self.labels = in_tuple
@@ -25,9 +26,13 @@ class DataBatch(object):
             self.features, self.labels = None, None
             self.h5_path = path
             self.dtype = dtype            
-            self.all_files = glob.glob(os.path.join(self.h5_path, "*.h5"))                                    
-
-            self._dict = self.get_metadata_dataset()
+            self.all_files = glob.glob(os.path.join(self.h5_path, "*.h5"))    
+                                
+            if (self.dtype == 'valid'):
+                num_exam = architecture['valid_num_examples']
+            else:
+                num_exam = architecture['total_num_examples']
+            self._dict = self.get_metadata_dataset(num_exam, architecture['n_input'], architecture['n_classes'])
             if (self._dict == None):
                 raise ValueError('DataBatch: The dictionary was not loaded!')
             
@@ -65,32 +70,78 @@ class DataBatch(object):
 #        except  Exception  as e:        
 #            raise ValueError('Error in retrieving the METADATA object: ' + str(e))    
 
-    def get_metadata_dataset(self):
+# =============================================================================
+#     def get_metadata_dataset(self):
+#         try:                          
+#             files_dict = {}  
+#             self._total_num_examples = 0
+#             ok_inputs = True
+#             for i, file_path in zip(range(len(self.all_files)), self.all_files):    
+#                 with pd.HDFStore(file_path) as dataset_file:                
+#                     print(file_path, '...to load')
+#                     dataset_features = dataset_file.select(self.dtype+'/features', start=0).values #, stop=500000
+#                     nrows = dataset_features.shape[0] # dataset_file.get_storer(self.dtype + '/features').nrows
+#                     
+#                     if (ok_inputs): 
+#                         self.index_length = len(dataset_file.get_storer(self.dtype+'/features').attrs.data_columns)            
+#                         self._num_columns = dataset_file.get_storer(self.dtype+ '/features').ncols - self.index_length
+#                         self._num_classes = dataset_file.get_storer(self.dtype+'/labels').ncols - self.index_length   
+#                         self.features_list = dataset_file.get_storer(self.dtype+'/features').attrs.non_index_axes[0][1][self.index_length:]
+#                         self.labels_list = dataset_file.get_storer(self.dtype+'/labels').attrs.non_index_axes[0][1][self.index_length:]                        
+#                         ok_inputs = False
+# 
+#                     dataset_labels = dataset_file.select(self.dtype+'/labels', start=0, stop=nrows).values
+#                     files_dict[i] = {'path': file_path, 'nrows': nrows, 
+#                                  'init_index': self._total_num_examples, 'end_index': self._total_num_examples + nrows,
+#                                   'dataset_features' : dataset_features, 'dataset_labels': dataset_labels}        
+#                     self._total_num_examples += nrows            
+#                     print(file_path, ' loaded in RAM')
+#             return files_dict        
+#         except  Exception  as e:        
+#             raise ValueError('Error in retrieving the METADATA object: ' + str(e))    
+# 
+# =============================================================================
+            
+    def get_metadata_dataset(self, max_rows, num_feat, num_class):
         try:                          
             files_dict = {}  
             self._total_num_examples = 0
             ok_inputs = True
+            dataset_features = np.empty((max_rows, num_feat), dtype=np.float32)
+            dataset_labels = np.empty((max_rows,num_class), dtype=np.int8)            
             for i, file_path in zip(range(len(self.all_files)), self.all_files):    
                 with pd.HDFStore(file_path) as dataset_file:                
-                    dataset_features = dataset_file.select(self.dtype+'/features', start=0).values #, stop=500000
-                    nrows = dataset_features.shape[0] # dataset_file.get_storer(self.dtype + '/features').nrows
-                    
+                    print(file_path, '...to load')
+                    total_rows = dataset_file.get_storer(self.dtype + '/features').nrows
+                    if (total_rows <= max_rows):
+                        max_rows -= total_rows
+                        dataset_features[self._total_num_examples : self._total_num_examples + total_rows, :] = dataset_file.select(self.dtype+'/features', start=0).values #, stop=500000                        
+                        dataset_labels[self._total_num_examples : self._total_num_examples + total_rows, :] = dataset_file.select(self.dtype+'/labels', start=0, stop=total_rows).values
+                    else:
+                        total_rows = max_rows
+                        dataset_features[self._total_num_examples : self._total_num_examples + total_rows, :] = dataset_file.select(self.dtype+'/features', start=0, stop=total_rows).values #, stop=500000
+                        dataset_labels[self._total_num_examples : self._total_num_examples + total_rows, :] = dataset_file.select(self.dtype+'/labels', start=0, stop=total_rows).values
+                                                                                    
                     if (ok_inputs): 
                         self.index_length = len(dataset_file.get_storer(self.dtype+'/features').attrs.data_columns)            
                         self._num_columns = dataset_file.get_storer(self.dtype+ '/features').ncols - self.index_length
                         self._num_classes = dataset_file.get_storer(self.dtype+'/labels').ncols - self.index_length   
                         self.features_list = dataset_file.get_storer(self.dtype+'/features').attrs.non_index_axes[0][1][self.index_length:]
                         self.labels_list = dataset_file.get_storer(self.dtype+'/labels').attrs.non_index_axes[0][1][self.index_length:]                        
-                        ok_inputs = False
+                        ok_inputs = False                    
+                        
+                    self._total_num_examples += total_rows                    
+                    print(file_path, ' loaded in RAM')
+                    if (total_rows == max_rows):
+                        break
 
-                    dataset_labels = dataset_file.select(self.dtype+'/labels', start=0, stop=nrows).values
-                    files_dict[i] = {'path': file_path, 'nrows': nrows, 
-                                 'init_index': self._total_num_examples, 'end_index': self._total_num_examples + nrows,
-                                  'dataset_features' : dataset_features, 'dataset_labels': dataset_labels}        
-                    self._total_num_examples += nrows                    
+            files_dict[0] = {'nrows': self._total_num_examples, 'init_index': 0, 'end_index': self._total_num_examples,
+             'dataset_features' : dataset_features, 'dataset_labels': dataset_labels}        
+
             return files_dict        
         except  Exception  as e:        
             raise ValueError('Error in retrieving the METADATA object: ' + str(e))    
+
             
 #    def get_metadata_dataset_repeats(self, repeats):
 #        try:                          
@@ -435,7 +486,7 @@ class Data(object):
 class Dataset(object):
     """A new class to represent learning datasets."""
 
-    def __init__(self, train_tuple=None, valid_tuple=None, test_tuple=None, feature_columns=None, train_path=None, valid_path=None, test_path=None, 
+    def __init__(self, architecture, train_tuple=None, valid_tuple=None, test_tuple=None, feature_columns=None, train_path=None, valid_path=None, test_path=None, 
                  train_period=[121, 279], valid_period=[280,285], test_period=[286, 304]):
         if (train_tuple!=None and valid_tuple!=None and test_tuple!=None):
             self.train = DataBatch(train_tuple, train_period)
@@ -445,9 +496,9 @@ class Dataset(object):
         elif (train_path==None and valid_path==None and test_path==None):  
             raise ValueError('DataBatch: The path for at least one set was not loaded!')
         else:
-            self.train = DataBatch(train_path, train_period, dtype='train') 
-            self.validation = DataBatch(valid_path, valid_period, dtype='valid') # Data((h5_dataset.get('valid/features'), h5_dataset.get('valid/labels')))
-            self.test = DataBatch(test_path, test_period, dtype='test') # Data((h5_dataset.get('test/features'), h5_dataset.get('test/labels'))) #if it gives some trouble, it will be loaded at the end.
+            self.train = DataBatch(architecture, train_path, train_period, dtype='train') 
+            self.validation = DataBatch(architecture, valid_path, valid_period, dtype='valid') # Data((h5_dataset.get('valid/features'), h5_dataset.get('valid/labels')))
+            self.test = DataBatch(architecture, test_path, test_period, dtype='test') # Data((h5_dataset.get('test/features'), h5_dataset.get('test/labels'))) #if it gives some trouble, it will be loaded at the end.
 
 
 def get_weights(labels):

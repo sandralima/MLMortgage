@@ -39,11 +39,6 @@ class DataBatch(object):
             # self.dataset = pd.HDFStore(self.all_files[self.dataset_index]) # the first file of the path
             # self._current_num_examples = self.dataset.get_storer(self.dtype+'/features').nrows
             # self._num_columns = self.dataset.get_storer('features').attrs.num_columns
-            self.index_length = len(self._dict[self.dataset_index]['dataset'].get_storer(self.dtype+'/features').attrs.data_columns)            
-            self._num_columns = self._dict[self.dataset_index]['dataset'].get_storer(self.dtype+ '/features').ncols - self.index_length
-            self._num_classes = self._dict[self.dataset_index]['dataset'].get_storer(self.dtype+'/labels').ncols - self.index_length   
-            self.features_list = self._dict[self.dataset_index]['dataset'].get_storer(self.dtype+'/features').attrs.non_index_axes[0][1][self.index_length:]
-            self.labels_list = self._dict[self.dataset_index]['dataset'].get_storer(self.dtype+'/labels').attrs.non_index_axes[0][1][self.index_length:]                        
             self.period_range =  period_array #set(range(period_array[0], period_array[1]+1))
             #self.period_features = set(list(self.dataset['features'].index.get_level_values(2)))
             #self.period_inter = self.period_features.intersection(self.period_range)            
@@ -74,10 +69,20 @@ class DataBatch(object):
         try:                          
             files_dict = {}  
             self._total_num_examples = 0
+            ok_inputs = True
             for i, file_path in zip(range(len(self.all_files)), self.all_files):    
                 with pd.HDFStore(file_path) as dataset_file:                
                     dataset_features = dataset_file.select(self.dtype+'/features', start=0).values #, stop=500000
                     nrows = dataset_features.shape[0] # dataset_file.get_storer(self.dtype + '/features').nrows
+                    
+                    if (ok_inputs): 
+                        self.index_length = len(dataset_file.get_storer(self.dtype+'/features').attrs.data_columns)            
+                        self._num_columns = dataset_file.get_storer(self.dtype+ '/features').ncols - self.index_length
+                        self._num_classes = dataset_file.get_storer(self.dtype+'/labels').ncols - self.index_length   
+                        self.features_list = dataset_file.get_storer(self.dtype+'/features').attrs.non_index_axes[0][1][self.index_length:]
+                        self.labels_list = dataset_file.get_storer(self.dtype+'/labels').attrs.non_index_axes[0][1][self.index_length:]                        
+                        ok_inputs = False
+
                     dataset_labels = dataset_file.select(self.dtype+'/labels', start=0, stop=nrows).values
                     files_dict[i] = {'path': file_path, 'nrows': nrows, 
                                  'init_index': self._total_num_examples, 'end_index': self._total_num_examples + nrows,
@@ -171,8 +176,8 @@ class DataBatch(object):
         """Get the next batch of the data with the given batch size."""
         if not isinstance(batch_size, int):
             raise TypeError('DataBatch: batch_size has to be of int type.')
-        if (self._dict[self.dataset_index]['dataset']==None):
-            raise ValueError('DataBatch: The file_dataset was not loaded!')                      
+        if (self._dict==None):
+            raise ValueError('DataBatch: The dataset was not loaded!')                      
                 
         if self._file_index + batch_size <= self._dict[self.dataset_index]['nrows']:            
             # temp_features = pd.read_hdf(self._dict[self.dataset_index]['dataset'], self.dtype+'/features', start=self._file_index, stop=self._file_index + batch_size)
@@ -403,26 +408,7 @@ class DataBatch(object):
     @property
     def num_columns(self):
         """Get the number of examples in the dataset."""
-        return self._num_columns
-    
-    def __del__(self, *args):
-        for k, v in self._dict.items():
-            try:
-                if v['dataset'].is_open: 
-                    v['dataset'].close()
-                    print('__del__ ', v['path'], ': File Closed')
-            except Exception as e:
-                print('__del__ Error Closing Files: ' + str(e))                                    
-                
-    def __exit__(self, type, value, traceback): # __exit__(self, *args):
-        for k, v in self._dict.items():
-            try:
-                if v['dataset'].is_open: 
-                    v['dataset'].close()
-                    print('__exit__ ', v['path'], ': File Closed')
-            except Exception as e:
-                print('__exit__ Error Closing Files: ' + str(e))                                    
-        
+        return self._num_columns            
 
 
 class Data(object):

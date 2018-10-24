@@ -641,10 +641,14 @@ def prepro_chunk(file_name, file_path, chunksize, label, log_file, nan_cols, cat
             train_index = tag_chunk('train', label, chunk, chunk_periods, train_period, log_file, with_index, train_index, tfrec=tfrec[0])
             valid_index = tag_chunk('valid', label, chunk, chunk_periods, valid_period, log_file, with_index, valid_index, tfrec=tfrec[1])
             test_index = tag_chunk('test', label, chunk, chunk_periods, test_period, log_file, with_index, test_index, tfrec=tfrec[2])
+            sys.stdout.flush()
         elif (hdf!=None):
-            train_index = tag_chunk('train', label, chunk, chunk_periods, train_period, log_file, with_index, train_index, hdf=hdf)
-            valid_index = tag_chunk('valid', label, chunk, chunk_periods, valid_period, log_file, with_index, valid_index, hdf=hdf)
-            test_index = tag_chunk('test', label, chunk, chunk_periods, test_period, log_file, with_index, test_index, hdf=hdf)
+            train_index = tag_chunk('train', label, chunk, chunk_periods, train_period, log_file, with_index, train_index, hdf=hdf[0])
+            valid_index = tag_chunk('valid', label, chunk, chunk_periods, valid_period, log_file, with_index, valid_index, hdf=hdf[1])
+            test_index = tag_chunk('test', label, chunk, chunk_periods, test_period, log_file, with_index, test_index, hdf=hdf[2])
+            hdf[0].flush()
+            hdf[1].flush()
+            hdf[2].flush()
                 
         
         inter_periods = list(chunk_periods.intersection(set(range(test_period[1]+1,355))))    
@@ -652,8 +656,6 @@ def prepro_chunk(file_name, file_path, chunksize, label, log_file, nan_cols, cat
         p_chunk = chunk.loc[(slice(None), slice(None), slice(None), inter_periods), :]
         log_file.write('Records greater than test_period - Number of rows: %d\r\n' % (p_chunk.shape[0]))
         
-        if (hdf!=None): hdf.flush()
-        elif (tfrec!=None): sys.stdout.flush()
         del chunk        
         i +=  1   
     
@@ -765,32 +767,35 @@ def allfeatures_prepro_file(RAW_DIR, file_path, raw_dir, file_name, target_path,
     minmax_cols = np.delete(minmax_cols,to_delete, 0)            
     
     if (output_hdf == True):
-        with  pd.HDFStore(target_path +'-pp.h5', complib='lzo', complevel=9) as hdf: #complib='lzo', complevel=9
+        #with  pd.HDFStore(target_path +'-pp.h5', complib='lzo', complevel=9) as hdf: #complib='lzo', complevel=9
+        train_writer = pd.HDFStore(target_path +'-train-pp.h5', complib='lzo', complevel=9) 
+        valid_writer = pd.HDFStore(target_path +'-valid-pp.h5', complib='lzo', complevel=9)
+        test_writer = pd.HDFStore(target_path +'-test-pp.h5', complib='lzo', complevel=9) 
             
-            print('generating: ', target_path +'-pp.h5')
-            train_index, valid_index, test_index = prepro_chunk(file_name, file_path, chunksize, label, log_file, nan_cols, categorical_cols, descriptive_cols, 
-                                                                time_cols, robust_cols, minmax_cols, robust_normalizer, minmax_normalizer, dist_file, with_index, 
-                                                                refNorm, train_period, valid_period, test_period, hdf=hdf, tfrec=None)            
-            
-            print(train_index, valid_index, test_index)
-            
-            if hdf.get_storer('train/features').nrows != hdf.get_storer('train/labels').nrows:
-                    raise ValueError('Train-DataSet: Sizes should match!')  
-            if hdf.get_storer('valid/features').nrows != hdf.get_storer('valid/labels').nrows:
-                    raise ValueError('Valid-DataSet: Sizes should match!')  
-            if hdf.get_storer('test/features').nrows != hdf.get_storer('test/labels').nrows:
-                    raise ValueError('Test-DataSet: Sizes should match!')  
-            
-            print('train/features size: ', hdf.get_storer('train/features').nrows)
-            print('valid/features size: ', hdf.get_storer('valid/features').nrows)
-            print('test/features size: ', hdf.get_storer('test/features').nrows)
-            
-            log_file.write('***SUMMARY***\n')
-            log_file.write('train/features size: %d\r\n' %(hdf.get_storer('train/features').nrows))
-            log_file.write('valid/features size: %d\r\n' %(hdf.get_storer('valid/features').nrows))
-            log_file.write('test/features size: %d\r\n' %(hdf.get_storer('test/features').nrows))
-    
-            logger.info('training, validation and testing set into .h5 file')        
+        print('generating: ', target_path +'-pp.h5')
+        train_index, valid_index, test_index = prepro_chunk(file_name, file_path, chunksize, label, log_file, nan_cols, categorical_cols, descriptive_cols, 
+                                                            time_cols, robust_cols, minmax_cols, robust_normalizer, minmax_normalizer, dist_file, with_index, 
+                                                            refNorm, train_period, valid_period, test_period, hdf=[train_writer, valid_writer, test_writer], tfrec=None)            
+        
+        print(train_index, valid_index, test_index)
+        
+        if train_writer.get_storer('train/features').nrows != train_writer.get_storer('train/labels').nrows:
+                raise ValueError('Train-DataSet: Sizes should match!')  
+        if valid_writer.get_storer('valid/features').nrows != valid_writer.get_storer('valid/labels').nrows:
+                raise ValueError('Valid-DataSet: Sizes should match!')  
+        if test_writer.get_storer('test/features').nrows != test_writer.get_storer('test/labels').nrows:
+                raise ValueError('Test-DataSet: Sizes should match!')  
+        
+        print('train/features size: ', train_writer.get_storer('train/features').nrows)
+        print('valid/features size: ', valid_writer.get_storer('valid/features').nrows)
+        print('test/features size: ', test_writer.get_storer('test/features').nrows)
+        
+        log_file.write('***SUMMARY***\n')
+        log_file.write('train/features size: %d\r\n' %(train_writer.get_storer('train/features').nrows))
+        log_file.write('valid/features size: %d\r\n' %(valid_writer.get_storer('valid/features').nrows))
+        log_file.write('test/features size: %d\r\n' %(test_writer.get_storer('test/features').nrows))
+
+        logger.info('training, validation and testing set into .h5 file')        
     else:        
         train_writer = tf.python_io.TFRecordWriter(target_path +'-train-pp.tfrecords')
         valid_writer = tf.python_io.TFRecordWriter(target_path +'-valid-pp.tfrecords')

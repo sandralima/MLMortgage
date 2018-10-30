@@ -28,11 +28,11 @@ class DataBatch(object):
             self.dtype = dtype            
             self.all_files = glob.glob(os.path.join(self.h5_path, "*.h5"))    
                                 
-            if (self.dtype == 'valid'):
+            if (dtype == 'valid'):
                 num_exam = architecture['valid_num_examples']
             else:
                 num_exam = architecture['total_num_examples']
-            self._dict = self.get_metadata_dataset(num_exam, architecture['n_input'], architecture['n_classes'])
+            self._dict = self.get_metadata_dataset(num_exam)
             if (self._dict == None):
                 raise ValueError('DataBatch: The dictionary was not loaded!')
             
@@ -45,6 +45,9 @@ class DataBatch(object):
             # self._current_num_examples = self.dataset.get_storer(self.dtype+'/features').nrows
             # self._num_columns = self.dataset.get_storer('features').attrs.num_columns
             self.period_range =  period_array #set(range(period_array[0], period_array[1]+1))
+            self._num_columns = architecture['n_input'] # dataset_file.get_storer(self.dtype+ '/features').ncols - self.index_length
+            self._num_classes = architecture['n_classes'] # dataset_file.get_storer(self.dtype+'/labels').ncols - self.index_length   
+
             #self.period_features = set(list(self.dataset['features'].index.get_level_values(2)))
             #self.period_inter = self.period_features.intersection(self.period_range)            
         else: #Dataset empty!
@@ -102,30 +105,29 @@ class DataBatch(object):
 # 
 # =============================================================================
             
-    def get_metadata_dataset(self, max_rows, num_feat, num_class):
+    def get_metadata_dataset(self, max_rows):
         try:                          
             files_dict = {}  
             self._total_num_examples = 0
             ok_inputs = True
-            dataset_features = np.empty((max_rows, num_feat), dtype=np.float32)
-            dataset_labels = np.empty((max_rows,num_class), dtype=np.int8)            
+            files_dict[0] = {}
+            files_dict[0]['dataset_features'] = [] # np.empty((max_rows, num_feat), dtype=np.float32)
+            files_dict[0]['dataset_labels'] = [] # np.empty((max_rows,num_class), dtype=np.int8)            
             for i, file_path in zip(range(len(self.all_files)), self.all_files):    
                 with pd.HDFStore(file_path) as dataset_file:                
                     print(file_path, '...to load')
                     total_rows = dataset_file.get_storer(self.dtype + '/features').nrows
                     if (total_rows <= max_rows):
                         max_rows -= total_rows
-                        dataset_features[self._total_num_examples : self._total_num_examples + total_rows, :] = dataset_file.select(self.dtype+'/features', start=0).values #, stop=500000                        
-                        dataset_labels[self._total_num_examples : self._total_num_examples + total_rows, :] = dataset_file.select(self.dtype+'/labels', start=0, stop=total_rows).values
+                        files_dict[0]['dataset_features'].extend(dataset_file.select(self.dtype+'/features', start=0).values) #, stop=500000                        
+                        files_dict[0]['dataset_labels'].extend(dataset_file.select(self.dtype+'/labels', start=0, stop=total_rows).values)
                     else:
                         total_rows = max_rows
-                        dataset_features[self._total_num_examples : self._total_num_examples + total_rows, :] = dataset_file.select(self.dtype+'/features', start=0, stop=total_rows).values #, stop=500000
-                        dataset_labels[self._total_num_examples : self._total_num_examples + total_rows, :] = dataset_file.select(self.dtype+'/labels', start=0, stop=total_rows).values
+                        files_dict[0]['dataset_features'].extend(dataset_file.select(self.dtype+'/features', start=0, stop=total_rows).values) #, stop=500000
+                        files_dict[0]['dataset_labels'].extend(dataset_file.select(self.dtype+'/labels', start=0, stop=total_rows).values)
                                                                                     
                     if (ok_inputs): 
                         self.index_length = len(dataset_file.get_storer(self.dtype+'/features').attrs.data_columns)            
-                        self._num_columns = dataset_file.get_storer(self.dtype+ '/features').ncols - self.index_length
-                        self._num_classes = dataset_file.get_storer(self.dtype+'/labels').ncols - self.index_length   
                         self.features_list = dataset_file.get_storer(self.dtype+'/features').attrs.non_index_axes[0][1][self.index_length:]
                         self.labels_list = dataset_file.get_storer(self.dtype+'/labels').attrs.non_index_axes[0][1][self.index_length:]                        
                         ok_inputs = False                    
@@ -135,8 +137,9 @@ class DataBatch(object):
                     if (total_rows == max_rows):
                         break
 
-            files_dict[0] = {'nrows': self._total_num_examples, 'init_index': 0, 'end_index': self._total_num_examples,
-             'dataset_features' : dataset_features, 'dataset_labels': dataset_labels}        
+            files_dict[0]['nrows'] = self._total_num_examples
+            files_dict[0]['init_index'] = 0
+            files_dict[0]['end_index'] = self._total_num_examples                         
 
             return files_dict        
         except  Exception  as e:        
@@ -234,20 +237,20 @@ class DataBatch(object):
             # temp_features = pd.read_hdf(self._dict[self.dataset_index]['dataset'], self.dtype+'/features', start=self._file_index, stop=self._file_index + batch_size)
             # temp_labels = pd.read_hdf(self._dict[self.dataset_index]['dataset'], self.dtype+'/labels', start=self._file_index, stop=self._file_index + batch_size)
             # temp_features = self._dict[self.dataset_index]['dataset'].select(self.dtype+'/features', start=self._file_index, stop=self._file_index + batch_size)
-            temp_features = self._dict[self.dataset_index]['dataset_features'][self._file_index: self._file_index + batch_size, :]
-            temp_labels = self._dict[self.dataset_index]['dataset_labels'][self._file_index: self._file_index + batch_size, :]
+            temp_features = np.array(self._dict[self.dataset_index]['dataset_features'][self._file_index: self._file_index + batch_size])
+            temp_labels = np.array(self._dict[self.dataset_index]['dataset_labels'][self._file_index: self._file_index + batch_size])
             self._file_index += batch_size
         else:            
             # temp_features = pd.read_hdf(self._dict[self.dataset_index]['dataset'], self.dtype+'/features', start=self._file_index)            
             # temp_labels = pd.read_hdf(self._dict[self.dataset_index]['dataset'], self.dtype+'/labels', start=self._file_index)            
-            temp_features = self._dict[self.dataset_index]['dataset_features'][self._file_index :, :]
-            temp_labels = self._dict[self.dataset_index]['dataset_labels'][self._file_index :, :]
+            temp_features = np.array(self._dict[self.dataset_index]['dataset_features'][self._file_index :])
+            temp_labels = np.array(self._dict[self.dataset_index]['dataset_labels'][self._file_index :])
             # hdf = pd.read_hdf('storage.h5', 'd1', where=['A>.5'], columns=['A','B'])
             self._file_index = 0
-            self.dataset_index += 1
+            #self.dataset_index += 1
             
-            if (self.dataset_index >= len(self.all_files)):
-                self.dataset_index = 0
+            #if (self.dataset_index >= len(self.all_files)):
+            #    self.dataset_index = 0
             
             # self.dataset.close()
             # self.dataset = pd.HDFStore(self.all_files[self.dataset_index]) # the next file of the path
@@ -339,9 +342,9 @@ class DataBatch(object):
                     #temp_labels = np.concatenate((temp_labels, self.dataset.select(self.dtype+'/labels', where=orb).values))
 
                     # df_features = v['dataset_features'][orb, :]
-                    temp_features[orb_size : orb_size + len(orb), :] = v['dataset_features'][orb, :]
+                    temp_features[orb_size : orb_size + len(orb), :] = np.array([v['dataset_features'][index] for index in orb]) # v['dataset_features'][orb, :]
                     # df_labels = v['dataset_labels'][orb, :]
-                    temp_labels[orb_size : orb_size + len(orb), :] = v['dataset_labels'][orb, :]                    
+                    temp_labels[orb_size : orb_size + len(orb), :] = np.array([v['dataset_labels'][index] for index in orb]) # v['dataset_labels'][orb, :]                    
                     # df_features = v['dataset'].select(self.dtype+'/features', where=orb)
                     #df_labels = v['dataset'].select(self.dtype+'/labels', where=orb)
                     
@@ -368,7 +371,7 @@ class DataBatch(object):
         #np.random.shuffle(temp_features)
         #np.random.shuffle(temp_labels)
         #print('Time for Getting ', orb_size, ' random elements: ', datetime.now() - startTime)                    
-        return temp_features, temp_labels, np.array([1.0], dtype=np.dtype('float32'))  # temp_weights    
+        return temp_features, temp_labels #, np.array([1.0], dtype=np.dtype('float32'))  # temp_weights    
     
     
     def next_random_batch_ind_access(self, batch_size): # pending!! --_ind_access

@@ -512,37 +512,36 @@ def tag_chunk(tag, label, chunk, chunk_periods, tag_period, log_file, with_index
     print('Records for ' + tag + ' Set - Number of rows:', p_chunk.shape[0])
     if (p_chunk.shape[0] > 0):
         if (with_index==True):
-            p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(tag_index, tag_index + p_chunk.shape[0]))])        
-            labels = allfeatures_extract_labels(p_chunk, columns=label)
-            print('chunk and labels shape: ', (p_chunk.shape[0] == labels.shape[0]))
-            p_chunk = p_chunk.astype(DT_FLOAT)
-            labels = labels.astype(np.int8)
-            if (p_chunk.shape[0] != labels.shape[0]) : 
-                print('Error in shapes:', p_chunk.shape, labels.shape)
-            else :
-                if (hdf!=None):
-                    hdf.put(tag + '/features', p_chunk, append=True)
-                    hdf.put(tag + '/labels', labels, append=True)                         
-                elif (tfrec!=None):
-                    for row, lab in zip(p_chunk.values, labels.values):
-                        feature = {tag + '/labels': _int64_feature(lab),
-                                   tag + '/features': _float_feature(row)}
-                        # Create an example protocol buffer
-                        example = tf.train.Example(features=tf.train.Features(feature=feature))
-                        tfrec.write(example.SerializeToString())                            
-                    tfrec.flush()
-                tag_index += p_chunk.shape[0]
+            p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(tag_index, tag_index + p_chunk.shape[0]))])                                
         else:
             p_chunk.reset_index(drop=True, inplace=True)
-            labels = allfeatures_extract_labels(p_chunk, columns=label)
-            if (hdf!=None): #only for h5 files:
-                pc_subframes = splitDataFrameIntoSmaller(p_chunk, chunkSize = 1000)
-                for sf in pc_subframes:
-                    hdf.put(tag + '/features', sf.astype(DT_FLOAT), append=True)
-                lb_subframes = splitDataFrameIntoSmaller(labels, chunkSize = 1000)
-                for sf in lb_subframes:
-                    hdf.put(tag + '/labels', sf.astype('int8'), append=True)
-                    
+            
+        labels = allfeatures_extract_labels(p_chunk, columns=label)
+        p_chunk = p_chunk.astype(DT_FLOAT)
+        labels = labels.astype(np.int8)
+        if (p_chunk.shape[0] != labels.shape[0]) : 
+            print('Error in shapes:', p_chunk.shape, labels.shape)
+        else :
+            if (hdf!=None):
+                hdf.put(tag + '/features', p_chunk, append=True)
+                hdf.put(tag + '/labels', labels, append=True)                         
+#                pc_subframes = splitDataFrameIntoSmaller(p_chunk, chunkSize = 1000)
+#                for sf in pc_subframes:
+#                    hdf.put(tag + '/features', sf.astype(DT_FLOAT), append=True)
+#                lb_subframes = splitDataFrameIntoSmaller(labels, chunkSize = 1000)
+#                for sf in lb_subframes:
+#                    hdf.put(tag + '/labels', sf.astype('int8'), append=True)                
+                hdf.flush()                      
+            elif (tfrec!=None):
+                for row, lab in zip(p_chunk.values, labels.values):
+                    feature = {tag + '/labels': _int64_feature(lab),
+                               tag + '/features': _float_feature(row)}
+                    # Create an example protocol buffer
+                    example = tf.train.Example(features=tf.train.Features(feature=feature))
+                    tfrec.write(example.SerializeToString())                            
+                tfrec.flush()
+            tag_index += p_chunk.shape[0]
+
     return tag_index
         
 
@@ -645,11 +644,7 @@ def prepro_chunk(file_name, file_path, chunksize, label, log_file, nan_cols, cat
         elif (hdf!=None):
             train_index = tag_chunk('train', label, chunk, chunk_periods, train_period, log_file, with_index, train_index, hdf=hdf[0])
             valid_index = tag_chunk('valid', label, chunk, chunk_periods, valid_period, log_file, with_index, valid_index, hdf=hdf[1])
-            test_index = tag_chunk('test', label, chunk, chunk_periods, test_period, log_file, with_index, test_index, hdf=hdf[2])
-            hdf[0].flush()
-            hdf[1].flush()
-            hdf[2].flush()
-                
+            test_index = tag_chunk('test', label, chunk, chunk_periods, test_period, log_file, with_index, test_index, hdf=hdf[2])                
         
         inter_periods = list(chunk_periods.intersection(set(range(test_period[1]+1,355))))    
         log_file.write('Periods greater than test_period: %s\r\n' % str(inter_periods))

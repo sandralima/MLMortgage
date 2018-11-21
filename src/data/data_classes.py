@@ -53,57 +53,6 @@ class DataBatch(object):
         else: #Dataset empty!
             self._dict = None
 
-
-#    def get_metadata_dataset(self):
-#        try:                          
-#            files_dict = {}  
-#            for i, file_path in zip(range(len(self.all_files)), self.all_files):    
-#                dataset_file = pd.HDFStore(file_path) # the first file of the path                
-#                dataset_features = dataset_file.select(self.dtype+'/features', start=0, stop=500000).values #, stop=500000
-#                nrows = dataset_features.shape[0] # dataset_file.get_storer(self.dtype + '/features').nrows
-#                print('dataset_features: ', dataset_features.shape)
-#                dataset_labels = dataset_file.select(self.dtype+'/labels', start=0, stop=nrows).values
-#                files_dict[i] = {'path': file_path, 'nrows': nrows, 
-#                                 'init_index': self._total_num_examples, 'end_index': self._total_num_examples + nrows,
-#                                  'dataset' : dataset_file, 'dataset_features' : dataset_features, 'dataset_labels': dataset_labels}        
-#                self._total_num_examples += nrows
-#                print('dict: ', files_dict[i], ' accumulated rows: ', self._total_num_examples)
-#                # if dataset.is_open: dataset.close()
-#            return files_dict        
-#        except  Exception  as e:        
-#            raise ValueError('Error in retrieving the METADATA object: ' + str(e))    
-
-# =============================================================================
-#     def get_metadata_dataset(self):
-#         try:                          
-#             files_dict = {}  
-#             self._total_num_examples = 0
-#             ok_inputs = True
-#             for i, file_path in zip(range(len(self.all_files)), self.all_files):    
-#                 with pd.HDFStore(file_path) as dataset_file:                
-#                     print(file_path, '...to load')
-#                     dataset_features = dataset_file.select(self.dtype+'/features', start=0).values #, stop=500000
-#                     nrows = dataset_features.shape[0] # dataset_file.get_storer(self.dtype + '/features').nrows
-#                     
-#                     if (ok_inputs): 
-#                         self.index_length = len(dataset_file.get_storer(self.dtype+'/features').attrs.data_columns)            
-#                         self._num_columns = dataset_file.get_storer(self.dtype+ '/features').ncols - self.index_length
-#                         self._num_classes = dataset_file.get_storer(self.dtype+'/labels').ncols - self.index_length   
-#                         self.features_list = dataset_file.get_storer(self.dtype+'/features').attrs.non_index_axes[0][1][self.index_length:]
-#                         self.labels_list = dataset_file.get_storer(self.dtype+'/labels').attrs.non_index_axes[0][1][self.index_length:]                        
-#                         ok_inputs = False
-# 
-#                     dataset_labels = dataset_file.select(self.dtype+'/labels', start=0, stop=nrows).values
-#                     files_dict[i] = {'path': file_path, 'nrows': nrows, 
-#                                  'init_index': self._total_num_examples, 'end_index': self._total_num_examples + nrows,
-#                                   'dataset_features' : dataset_features, 'dataset_labels': dataset_labels}        
-#                     self._total_num_examples += nrows            
-#                     print(file_path, ' loaded in RAM')
-#             return files_dict        
-#         except  Exception  as e:        
-#             raise ValueError('Error in retrieving the METADATA object: ' + str(e))    
-# 
-# =============================================================================
             
     def get_metadata_dataset(self, max_rows):
         try:                          
@@ -140,6 +89,16 @@ class DataBatch(object):
             files_dict[0]['nrows'] = self._total_num_examples
             files_dict[0]['init_index'] = 0
             files_dict[0]['end_index'] = self._total_num_examples                         
+            class_weights = np.sum(files_dict[0]['dataset_labels'], axis=0)
+            print('class_weights', class_weights)
+            class_weights = np.round(class_weights/np.float32(self._total_num_examples),decimals=3)
+            # 1-weights approach:
+            class_weights = np.subtract([1]*len(class_weights), class_weights)
+            #normalizing 1-weights approach:
+            #sumcw = np.sum(class_weights)
+            #class_weights = np.round(class_weights/np.float32(sumcw),decimals=3)
+            print('class_weights', class_weights)
+            files_dict[0]['class_weights']  = class_weights
 
             return files_dict        
         except  Exception  as e:        
@@ -462,7 +421,11 @@ class DataBatch(object):
     @property
     def num_columns(self):
         """Get the number of examples in the dataset."""
-        return self._num_columns            
+        return self._num_columns      
+    
+    @property
+    def class_weights(self):
+        return self._dict[0]['class_weights']
 
 
 class Data(object):

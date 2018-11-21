@@ -11,6 +11,7 @@ import logging
 import os
 from dotenv import find_dotenv, load_dotenv
 import data_classes
+import balanced_data_classes
 import Normalizer
 import datetime
 import glob
@@ -464,10 +465,14 @@ def custom_minmax_normalizer(ncols, scales, dist_file):
     # to_delete =[]
     for i, x in enumerate (ncols):  
 #        if scales[i] == 0:
-        x_frame = dist_file.iloc[:, np.where(pd.DataFrame(dist_file.columns.values)[0].str.contains(x+'_M'))[0]]    
-        if not(x_frame.empty) and (x_frame.shape[1]>1):            
-            minmax_scales.append(float(x_frame[x+'_MAX'].subtract(x_frame[x+'_MIN'])))                            
-            centers.append( float(x_frame[x+'_MIN']))
+        #x_frame = dist_file.iloc[:, np.where(pd.DataFrame(dist_file.columns.values)[0].str.contains(x+'_M'))[0]]    
+        x_min = dist_file.iloc[0, np.where(pd.DataFrame(dist_file.columns.values)[0].str.contains(x+'_MIN'))[0]]
+        x_max = dist_file.iloc[0, np.where(pd.DataFrame(dist_file.columns.values)[0].str.contains(x+'_MAX'))[0]]
+        if not(x_min.empty) and not(x_max.empty):            
+            x_min = np.float32(x_min.values[0])
+            x_max = np.float32(x_max.values[0])
+            minmax_scales.append(x_max - x_min)                            
+            centers.append(x_min)
             norm_cols.append(x)
             # to_delete.append(i)
         
@@ -507,12 +512,17 @@ def _float_feature(value):
 def tag_chunk(tag, label, chunk, chunk_periods, tag_period, log_file, with_index, tag_index, hdf=None, tfrec=None):
     inter_periods = list(chunk_periods.intersection(set(range(tag_period[0], tag_period[1]+1))))
     log_file.write('Periods corresponding to ' + tag +' period: %s\r\n' % str(inter_periods))
-    p_chunk = chunk.loc[(slice(None), slice(None), slice(None), inter_periods), :]
+    p_chunk = chunk.loc[(slice(None), inter_periods), :]
     log_file.write('Records for ' + tag +  ' Set - Number of rows: %d\r\n' % (p_chunk.shape[0]))
     print('Records for ' + tag + ' Set - Number of rows:', p_chunk.shape[0])
     if (p_chunk.shape[0] > 0):
         if (with_index==True):
-            p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(tag_index, tag_index + p_chunk.shape[0]))])                                
+            #p_chunk.index = pd.MultiIndex.from_tuples([(i, x[1], x[2],x[3]) for x,i in zip(p_chunk.index, range(tag_index, tag_index + p_chunk.shape[0]))])                                            
+            p_chunk.reset_index(inplace=True)
+            allfeatures_drop_cols(p_chunk, ['PERIOD'])      
+            p_chunk.set_index('DELINQUENCY_STATUS_NEXT', inplace=True) #1 index                          
+            # print(p_chunk.index)
+            
         else:
             p_chunk.reset_index(drop=True, inplace=True)
             
@@ -523,8 +533,8 @@ def tag_chunk(tag, label, chunk, chunk_periods, tag_period, log_file, with_index
             print('Error in shapes:', p_chunk.shape, labels.shape)
         else :
             if (hdf!=None):
-                hdf.put(tag + '/features', p_chunk, append=True)
-                hdf.put(tag + '/labels', labels, append=True)                         
+                hdf.put(tag + '/features', p_chunk, append=True, data_columns=['DELINQUENCY_STATUS_NEXT'], index=True)
+                hdf.put(tag + '/labels', labels, append=True, data_columns=['DELINQUENCY_STATUS_NEXT'], index=True)                         
 #                pc_subframes = splitDataFrameIntoSmaller(p_chunk, chunkSize = 1000)
 #                for sf in pc_subframes:
 #                    hdf.put(tag + '/features', sf.astype(DT_FLOAT), append=True)
@@ -543,6 +553,26 @@ def tag_chunk(tag, label, chunk, chunk_periods, tag_period, log_file, with_index
             tag_index += p_chunk.shape[0]
 
     return tag_index
+
+def zscore(x,mean,stdd):
+    return (x - mean) / stdd
+
+def zscore_apply(dist_file, data):            
+    stddv_0 = []
+    for col_name in data.columns.values:                        
+        
+        mean = pd.Series(dist_file.iloc[0, np.where(pd.DataFrame(dist_file.columns.values)[0].str.contains(col_name+'_MEAN'))[0]], dtype='float32')    
+        stddev = dist_file.iloc[0, np.where(pd.DataFrame(dist_file.columns.values)[0].str.contains(col_name+'_STDD'))[0]]    
+        if not mean.empty and not stddev.empty:  
+            mean = np.float32(mean.values[0])
+            stddev = np.float32(stddev.values[0])            
+            if stddev == 0: 
+                stddv_0.append(col_name)        
+            else:        
+                data[col_name] = data[col_name].apply(lambda x: zscore(x, mean, stddev))                        
+        else: print('Column not normalized: ', col_name)
+    print('STANDARD DEV zero: ', stddv_0)    
+    return data
         
 
 def prepro_chunk(file_name, file_path, chunksize, label, log_file, nan_cols, categorical_cols, descriptive_cols, time_cols, robust_cols, minmax_cols,
@@ -574,7 +604,7 @@ def prepro_chunk(file_name, file_path, chunksize, label, log_file, nan_cols, cat
         log_file.write('Filling NULL values - (rows, cols) : %d, %d\r\n' % (log_df.shape[0], log_df.shape[1]))            
         # log_df.to_csv(log_file, index=False, mode='a')  #summary          
         log_df = chunk[null_columns].isnull().sum().to_frame().reset_index()
-        log_df.to_csv(log_file, index=False, mode='a')                                    
+        log_df.to_csv(log_file, index=False, mode='a')                                            
         nan_cols = imputing_nan_values(nan_cols, dist_file)            
         chunk.fillna(value=nan_cols, inplace=True)   
         
@@ -586,19 +616,24 @@ def prepro_chunk(file_name, file_path, chunksize, label, log_file, nan_cols, cat
         chunk['ORIGINATION_YEAR'][chunk['ORIGINATION_YEAR']<1995] = "B1995"
         for k,v in categorical_cols.items():
             # if (chunk[k].dtype=='O'):                
+            old_len = len(chunk.columns.values)
             chunk[k] = chunk[k].astype('str')
             chunk[k] = chunk[k].str.strip()
             chunk[k].replace(['\.0$'], [''], regex=True,  inplace=True)
             new_cols = oneHotDummies_column(chunk[k], v)
             if (chunk[k].value_counts().sum()!=new_cols.sum().sum()):
-                print('Error at categorization, different sizes', k)
+                print('Error at categorization, different categories', k)
                 print(chunk[k].value_counts(), new_cols.sum())                
-                log_file.write('Error at categorization, different sizes %s\r\n' % str(k))
+                log_file.write('Error at categorization, different categories %s\r\n' % str(k))
                 chunk[new_cols.columns] = new_cols
             else:
                 chunk[new_cols.columns] = new_cols
                 log_file.write('New columns added: %s\r\n' % str(new_cols.columns.values))
-            
+                
+            if (len(chunk.columns.values)!=(len(new_cols.columns.values) + old_len)):
+                log_file.write('Error adding new columns to chunk : %s\r\n' % str(new_cols.columns.values))
+            if (len(v)!=len(new_cols.columns.values)):
+                log_file.write('Error adding new columns to chunk : %s\r\n' % str(new_cols.columns.values))            
                     
         allfeatures_drop_cols(chunk, descriptive_cols)                    
         #np.savetxt(log_file, descriptive_cols, header='descriptive_cols dropped:', newline=" ")
@@ -613,7 +648,7 @@ def prepro_chunk(file_name, file_path, chunksize, label, log_file, nan_cols, cat
         allfeatures_drop_cols(chunk, cat_list)
 
         chunk.reset_index(drop=True, inplace=True)  
-        chunk.set_index(['LOAN_ID', 'DELINQUENCY_STATUS_NEXT', 'PERIOD'], append=True, inplace=True) #4 indexes
+        chunk.set_index(['DELINQUENCY_STATUS_NEXT', 'PERIOD'], append=False, inplace=True) #2 indexes
         # np.savetxt(log_file, str(chunk.index.names), header='Indexes created:', newline=" ")
         log_file.write('Indexes created: %s\r\n' % str(chunk.index.names))
          
@@ -623,19 +658,20 @@ def prepro_chunk(file_name, file_path, chunksize, label, log_file, nan_cols, cat
                 
         
         if (refNorm==True):            
-            chunk[robust_cols] = robust_normalizer.transform(chunk[robust_cols])
-            chunk[minmax_cols] = minmax_normalizer.transform(chunk[minmax_cols])            
+            norm_df =  zscore_apply(dist_file, chunk[robust_cols]) #robust_normalizer.transform(chunk[robust_cols])
+            chunk[robust_cols] = norm_df
+            #chunk[minmax_cols] = minmax_normalizer.transform(chunk[minmax_cols])            
             #np.savetxt(log_file, robust_cols, header='robust_cols normalized:', newline=" ")
             log_file.write('robust_cols normalized: %s\r\n' % str(robust_cols))
             #np.savetxt(log_file, minmax_cols, header='minmax_cols normalized:', newline=" ")
-            log_file.write('minmax_cols normalized: %s\r\n' % str(minmax_cols))
+            #log_file.write('minmax_cols normalized: %s\r\n' % str(minmax_cols))
         
         if chunk.isnull().any().any(): raise ValueError('There are null values...File: ' + file_name)   
         
         #chunk.to_csv(file_path[:-4] +'-pp.csv', mode='a', index=False) 
         
         chunk_periods = set(list(chunk.index.get_level_values('PERIOD')))
-        print(tfrec)
+        #print(tfrec)
         if (tfrec!=None):
             train_index = tag_chunk('train', label, chunk, chunk_periods, train_period, log_file, with_index, train_index, tfrec=tfrec[0])
             valid_index = tag_chunk('valid', label, chunk, chunk_periods, valid_period, log_file, with_index, valid_index, tfrec=tfrec[1])
@@ -648,7 +684,7 @@ def prepro_chunk(file_name, file_path, chunksize, label, log_file, nan_cols, cat
         
         inter_periods = list(chunk_periods.intersection(set(range(test_period[1]+1,355))))    
         log_file.write('Periods greater than test_period: %s\r\n' % str(inter_periods))
-        p_chunk = chunk.loc[(slice(None), slice(None), slice(None), inter_periods), :]
+        p_chunk = chunk.loc[(slice(None), inter_periods), :]
         log_file.write('Records greater than test_period - Number of rows: %d\r\n' % (p_chunk.shape[0]))
         
         del chunk        
@@ -659,7 +695,7 @@ def prepro_chunk(file_name, file_path, chunksize, label, log_file, nan_cols, cat
 def allfeatures_prepro_file(RAW_DIR, file_path, raw_dir, file_name, target_path, train_period, valid_period, test_period, log_file, dividing='percentage', chunksize=500000, 
                             refNorm=True, label='DELINQUENCY_STATUS_NEXT', with_index=True, output_hdf=True):
     descriptive_cols = [
-#        'LOAN_ID',
+        'LOAN_ID',
         'ASOFMONTH',        
         'PERIOD_NEXT',
         'MOD_PER_FROM',
@@ -745,10 +781,17 @@ def allfeatures_prepro_file(RAW_DIR, file_path, raw_dir, file_name, target_path,
                            'CURRENT_INVESTOR_CODE': ['240', '250', '253', 'U'], 'ORIGINATION_YEAR': ['B1995','1995','1996','1997','1998','1999','2000','2001','2002','2003',
                                                     '2004','2005','2006','2007','2008','2009','2010','2011','2012','2013','2014','2015','2016','2017','2018']}
       
-    time_cols = ['YEAR', 'MONTH'] #, 'PERIOD'] #no nan values        
+    time_cols = ['YEAR', 'MONTH'] #, 'PERIOD'] #no nan values       
+    
+    total_cols = numeric_cols.copy() 
+    total_cols.extend(descriptive_cols)
+    total_cols.extend(categorical_cols.keys())
+    total_cols.extend(time_cols)
+    print('raw total_cols size: ', len(total_cols)) #110 !=112?? set(chunk_cols) - set(total_cols): {'LOAN_ID', 'PERIOD'}
+    
     pd.set_option('io.hdf.default_format','table')
     
-    dist_file = pd.read_csv(os.path.join(RAW_DIR, "percentile features3.csv"), sep=';', low_memory=False)
+    dist_file = pd.read_csv(os.path.join(RAW_DIR, "percentile features3-test.csv"), sep=';', low_memory=False)
     dist_file.columns = dist_file.columns.str.upper()
     
     ncols = [x for x in numeric_cols if x.find('NAN')<0]
@@ -763,13 +806,13 @@ def allfeatures_prepro_file(RAW_DIR, file_path, raw_dir, file_name, target_path,
     
     if (output_hdf == True):
         #with  pd.HDFStore(target_path +'-pp.h5', complib='lzo', complevel=9) as hdf: #complib='lzo', complevel=9
-        train_writer = pd.HDFStore(target_path +'-train-pp.h5', complib='lzo', complevel=9) 
-        valid_writer = pd.HDFStore(target_path +'-valid-pp.h5', complib='lzo', complevel=9)
-        test_writer = pd.HDFStore(target_path +'-test-pp.h5', complib='lzo', complevel=9) 
+        train_writer = pd.HDFStore(target_path +'-train_.h5', complib='lzo', complevel=9) 
+        valid_writer = pd.HDFStore(target_path +'-valid_.h5', complib='lzo', complevel=9)
+        test_writer = pd.HDFStore(target_path +'-test_.h5', complib='lzo', complevel=9) 
             
         print('generating: ', target_path +'-pp.h5')
         train_index, valid_index, test_index = prepro_chunk(file_name, file_path, chunksize, label, log_file, nan_cols, categorical_cols, descriptive_cols, 
-                                                            time_cols, robust_cols, minmax_cols, robust_normalizer, minmax_normalizer, dist_file, with_index, 
+                                                            time_cols, ncols, minmax_cols, robust_normalizer, minmax_normalizer, dist_file, with_index, 
                                                             refNorm, train_period, valid_period, test_period, hdf=[train_writer, valid_writer, test_writer], tfrec=None)            
         
         print(train_index, valid_index, test_index)
@@ -796,7 +839,7 @@ def allfeatures_prepro_file(RAW_DIR, file_path, raw_dir, file_name, target_path,
         valid_writer = tf.python_io.TFRecordWriter(target_path +'-valid-pp.tfrecords')
         test_writer = tf.python_io.TFRecordWriter(target_path +'-test-pp.tfrecords')
         train_index, valid_index, test_index = prepro_chunk(file_name, file_path, chunksize, label, log_file, nan_cols, categorical_cols, descriptive_cols, time_cols, 
-                                                            robust_cols, minmax_cols, robust_normalizer, minmax_normalizer, dist_file, with_index, refNorm, train_period, 
+                                                            ncols, minmax_cols, robust_normalizer, minmax_normalizer, dist_file, with_index, refNorm, train_period, 
 
                                                             valid_period, test_period, hdf=None, tfrec=[train_writer, valid_writer, test_writer]) 
         print(train_index, valid_index, test_index)
@@ -985,7 +1028,7 @@ def slice_table_sets(prep_dir, set_dir, tag, target_name, input_chunk_size=1200,
         if hdf_target.is_open: hdf_target.close()
         print(e)
                        
-def get_h5_dataset(PRO_DIR, architecture, train_dir, valid_dir, test_dir, train_period=[121, 316], valid_period=[317,323], test_period=[324, 351]):
+def get_h5_dataset(PRO_DIR, architecture, train_dir, valid_dir, test_dir, train_period=None, valid_period=None, test_period=None):
     train_path = os.path.join(PRO_DIR, train_dir) if train_dir is not None else None
     valid_path = os.path.join(PRO_DIR, valid_dir) if valid_dir is not None else None
     test_path = os.path.join(PRO_DIR, test_dir) if test_dir is not None else None
@@ -994,6 +1037,14 @@ def get_h5_dataset(PRO_DIR, architecture, train_dir, valid_dir, test_dir, train_
         
     return DATA
 
+def get_h5_bdataset(PRO_DIR, architecture, train_dir, valid_dir, test_dir, train_period=None, valid_period=None, test_period=None):
+    train_path = os.path.join(PRO_DIR, train_dir) if train_dir is not None else None
+    valid_path = os.path.join(PRO_DIR, valid_dir) if valid_dir is not None else None
+    test_path = os.path.join(PRO_DIR, test_dir) if test_dir is not None else None
+    DATA = balanced_data_classes.Dataset(architecture, train_path=train_path, valid_path=valid_path, test_path=test_path, 
+                                train_period=train_period, valid_period=valid_period, test_period=test_period)
+        
+    return DATA
     
 def allfeatures_preprocessing(RAW_DIR, PRO_DIR, raw_dir, train_num, valid_num, test_num, dividing='percentage', chunksize=500000, refNorm=True, with_index=True, output_hdf=True):            
 
@@ -1046,19 +1097,19 @@ def update_parser(parser):
         '--train_period',
         type=int,
         nargs='*',
-        default=[121,279], #[156, 180], [121,143],  # 279],
+        default=[121,323], #[156, 180], [121,143],  # 279],
         help='Training Period')
     parser.add_argument(
         '--valid_period',
         type=int,
         nargs='*',
-        default=[280,285], #[181,185], [144,147],
+        default=[324,329], #[181,185], [144,147],
         help='Validation Period')    
     parser.add_argument(
         '--test_period',
         type=int,
         nargs='*',
-        default= [286, 304], # [186,191], [148, 155],
+        default= [330, 342], # [186,191], [148, 155],
         help='Testing Period')    
     parser.add_argument(
         '--prepro_dir',

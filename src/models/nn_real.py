@@ -805,9 +805,9 @@ def run_model(comp_graph, name, net_number, FLAGS, DATA):
                 
                 # DATA.train.__exit__(dtype(inst), inst, inst.__traceback__)
                 if (not FLAGS.log_file == None): FLAGS.log_file.close()
-                DATA.train.__exit__(None, None, None)
-                DATA.validation.__exit__(None, None, None)
-                DATA.test.__exit__(None, None, None)
+                #DATA.train.__exit__(None, None, None)
+                #DATA.validation.__exit__(None, None, None)
+                #DATA.test.__exit__(None, None, None)
 
 
 
@@ -1125,7 +1125,8 @@ def write_summaries(sess, writers, mode, step, feed_dict):
 def create_feed_dict(tag, DATA, FLAGS):
     """Create the feed dictionary for mapping data onto placeholders in the graph."""
     if tag == 'batch':
-        features, targets, example_weights = DATA.train.next_random_batch(FLAGS.batch_size)        
+        features, targets = DATA.train.next_balanced_batch(FLAGS.batch_size)       # DATA.train.next_random_batch(FLAGS.batch_size)        
+        example_weights = np.array([1.0], dtype=NP_FLOAT)    
     elif tag == 'train':
         features = DATA.train.orig.features
         targets = DATA.train.orig.labels
@@ -1239,18 +1240,50 @@ def FLAGS_setting(FLAGS, net_number):
         FLAGS.batch_layer_type = 'batch'        
     
     FLAGS.log_file = open(os.path.join(FLAGS.logdir, FLAGS.name + '_' + str(net_number) +"_log.txt"), 'w+', 1)
+    FLAGS.eval=False
+    FLAGS.total_examples = 150000 #-1 to training all dataset, otherwise the training will have a fixed length
+    
     return FLAGS
 
-def architecture_settings(DATA, FLAGS):
-    # Architecture	
-    architecture = {
-        'n_input': DATA.train.num_columns,
-        'n_classes': DATA.validation.num_classes
-    }
+
+def architecture_settings(files_dict, FLAGS):
+    architecture = {}
+    architecture['rank'] = 0 # hvd.rank()
+    ok_inputs = True
+    for key in files_dict.keys():
+        total_records = 0
+        for file in files_dict[key]:                                
+            with pd.HDFStore(file) as dataset_file:
+                if (ok_inputs): 
+                    index_length = len(dataset_file.get_storer(key+'/features').attrs.data_columns)
+                    architecture['n_input'] = dataset_file.get_storer(key+ '/features').ncols - index_length
+                    architecture['n_classes'] = dataset_file.get_storer(key+'/labels').ncols - index_length
+                    ok_inputs = False                
+                total_records += dataset_file.get_storer(key + '/features').nrows
+        architecture[key + '_num_examples'] = total_records                            
+    
+    if FLAGS.eval:
+        architecture['total_num_examples'] = architecture['test_num_examples']
+    else:
+        if FLAGS.total_examples == -1:
+            architecture['total_num_examples'] = architecture['train_num_examples']
+        else:
+            architecture['total_num_examples'] = FLAGS.total_examples 
+    
     for hid_i in range(1, FLAGS.n_hidden+1):
         architecture['n_hidden_{:1d}'.format(hid_i)] = FLAGS.s_hidden[hid_i-1]
-    print('architecture', architecture)    
+    # print('rank: ', hvd.rank(), 'architecture', architecture)   
+    # time.sleep(5)
     return architecture
+
+
+def get_files_dict(FLAGS):        
+    ext = "*.h5"
+    files_dict = {'train': glob.glob(os.path.join(PRO_DIR, FLAGS.train_dir, ext)), 
+                  'valid': glob.glob(os.path.join(PRO_DIR, FLAGS.valid_dir, ext)), 
+                  'test': glob.glob(os.path.join(PRO_DIR, FLAGS.test_dir, ext))}
+    return files_dict
+
 
 def main(_):
     print("Run the main program.")
@@ -1261,35 +1294,23 @@ def main(_):
     if tf.gfile.Exists(FLAGS.logdir):
        tf.gfile.DeleteRecursively(FLAGS.logdir)
     tf.gfile.MakeDirs(FLAGS.logdir)    
+     
+    FLAGS = FLAGS_setting(FLAGS, 1)
+    files_dict = get_files_dict(FLAGS)
+    architecture = architecture_settings(files_dict, FLAGS)
+    DATA = md.get_h5_data(PRO_DIR, architecture, FLAGS.train_dir, FLAGS.valid_dir, FLAGS.test_dir)         
 
-    conf_number = 1    
-    #FLAGS.train_dir = 'train_set_1millx30mill' #'train_set_1millx30mill' # 'chuncks_random_c1mill_train'#'chunks_all_c1millx3' # 'train_set_1millx30mill' # 'c100th_train_set' # 'train_set_800th'
-    #FLAGS.valid_dir = 'c100th_valid_set' #'c100th_valid_set' # 'chuncks_random_c1mill_valid' # chunks_all_800th 'valid_set_800th'
-    #FLAGS.test_dir = 'c100th_test_set' #'c100th_test_set' # 'chuncks_random_c1mill_test' # 'test_set_800th'
-    # training_dict = md.get_dataset_metadata(train_dir)
-    DATA = md.get_h5_data(PRO_DIR, FLAGS.train_dir, FLAGS.valid_dir, FLAGS.test_dir) 
-    
-#    for file_path in glob.glob(os.path.join(PRO_DIR, subdir_name,"*.h5")):  
-#        file_name = os.path.basename(file_path)
-#        print('Dataset: ' + file_name)    
-    
-    for i in range(conf_number):                        
-        FLAGS = FLAGS_setting(FLAGS, i)
-        print("FLAGS", FLAGS)
-        FLAGS.log_file.write('METRICS:  %s\r\n' % str(FLAGS))
-        FLAGS.log_file.write('training files:  %s\r\n' % str(DATA.train._dict))
-        FLAGS.log_file.write('validation files:  %s\r\n' % str(DATA.validation._dict))
-        FLAGS.log_file.write('testing files:  %s\r\n' % str(DATA.test._dict))        
-        architecture = architecture_settings(DATA, FLAGS)
-        print('RAM before build: ', psutil.virtual_memory()) #  physical memory usage
-        FLAGS.log_file.write('RAM  before build: %s\r\n' % str(psutil.virtual_memory()))
-        graph = build_graph(architecture, FLAGS)        
-        print('RAM after build', psutil.virtual_memory()) #  physical memory usage
-        FLAGS.log_file.write('RAM  after build: %s\r\n' % str(psutil.virtual_memory()))
-        run_model(graph, 'testing_data', i,  FLAGS, DATA)      
-    #FLAGS = FLAGS_setting(FLAGS, 1)
-    #graph = build_graph(architecture, FLAGS)        
-    #run_model(graph, 'Data1-100_' + FLAGS.name, 1,  FLAGS, DATA)    
+    print("FLAGS", FLAGS)
+    FLAGS.log_file.write('METRICS:  %s\r\n' % str(FLAGS))
+    #FLAGS.log_file.write('training files:  %s\r\n' % str(DATA.train._dict))
+    #FLAGS.log_file.write('validation files:  %s\r\n' % str(DATA.validation._dict))
+    #FLAGS.log_file.write('testing files:  %s\r\n' % str(DATA.test._dict))                
+    print('RAM before build: ', psutil.virtual_memory()) #  physical memory usage
+    FLAGS.log_file.write('RAM  before build: %s\r\n' % str(psutil.virtual_memory()))
+    graph = build_graph(architecture, FLAGS)        
+    print('RAM after build', psutil.virtual_memory()) #  physical memory usage
+    FLAGS.log_file.write('RAM  after build: %s\r\n' % str(psutil.virtual_memory()))
+    run_model(graph, 'testing_data', 1,  FLAGS, DATA)      
 
 
 def update_parser(parser):

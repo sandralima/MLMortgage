@@ -49,7 +49,7 @@ def get_metadata_dataset1(dtype, max_rows, num_feat, num_class):
         _total_num_examples = 0        
         dataset_features = [] # np.empty((max_rows, num_feat), dtype=np.float32)
         dataset_labels = [] # np.empty((max_rows,num_class), dtype=np.int8)            
-        h5_path = os.path.join(PRO_DIR, 'chuncks_random_c1mill')
+        h5_path = os.path.join(PRO_DIR, 'chuncks_random_c1mill/cmill_AWS')
         all_files = glob.glob(os.path.join(h5_path, "*.h5"))
         for i, file_path in zip(range(len(all_files)), all_files):    
             with pd.HDFStore(file_path) as dataset_file:                
@@ -76,7 +76,74 @@ def get_metadata_dataset1(dtype, max_rows, num_feat, num_class):
     except  Exception  as e:        
         raise ValueError('Error in retrieving the METADATA object: ' + str(e))            
 
-#train_dict = get_metadata_dataset('train')
+
+def get_balance_dataset(dtype, max_rows, num_feat, num_class):
+    try:                          
+        files_dict = {}          
+        h5_path = os.path.join(PRO_DIR, 'chuncks_random_c1mill')
+        all_files = glob.glob(os.path.join(h5_path, "*.h5"))
+        total_files = len(all_files)            
+        lab_classes = ['0', '3', '6', '9', 'C', 'F', 'R']
         
-train_dict = get_metadata_dataset1('test', 500000, 257, 7)
-print(train_dict)
+        for nclass in lab_classes:
+            files_dict[nclass] = {'nrows': 0, 'init_index': 0, 'end_index': 0,
+                          'dataset_features' : [], 'dataset_labels': []}                
+                
+        _total_num_examples = 0
+        records_pfile = max_rows // total_files
+        for i, file_path in zip(range(total_files), all_files):    
+            with pd.HDFStore(file_path) as dataset_file:                                
+                print(file_path, '...to load')
+                #columns = dataset_file.get_storer(dtype+'/labels').attrs.non_index_axes[0][1]
+                total_records_file=0
+                for nclass in (set(lab_classes) - set('C')):
+                    print('class No.: ', nclass)                       
+                    class_features = dataset_file.select(dtype+'/features',  "index=='"+ str(nclass) + "'", start=0, stop=600000)                    
+                    class_labels = dataset_file.select(dtype+'/labels',  "index=='"+ str(nclass) + "'", start=0, stop=600000)                    
+                    #class_labels_idx = class_labels.index.tolist()
+                    #dataset_file.select(dtype+'/features').iloc[class_labels_idx.get_loc()].values
+                    #total_rows = len(class_labels_idx)
+                    files_dict[nclass]['dataset_features'].extend(class_features.values) #, stop=500000 
+                    files_dict[nclass]['dataset_labels'].extend(class_labels.values)
+                    total_rows = len(class_labels.values)
+                    files_dict[nclass]['nrows'] += total_rows                    
+                    max_rows -= total_rows                                                                                                                            
+                    _total_num_examples += total_rows
+                    total_records_file += total_rows                    
+                    print(file_path, ' class ', nclass,': loaded in RAM')                                        
+
+                if (max_rows <= 0):
+                    return files_dict                
+                
+
+                print('Majority class: C')                    
+                current_nrecords =   records_pfile -  total_records_file             
+                class_features = dataset_file.select(dtype+'/features',  'index==C', chunk_size=current_nrecords)                    
+                class_labels = dataset_file.select(dtype+'/labels', 'index==C', chunk_size=current_nrecords)                
+                total_rows = len(class_labels.values)
+                #class_labels_idx = class_labels.index.tolist()
+                #total_rows = len(class_labels_idx)
+                files_dict['C']['dataset_features'].extend(class_features.values) #, stop=500000 
+                files_dict['C']['dataset_labels'].extend(class_labels.values)
+                files_dict['C']['nrows'] += total_rows                    
+                max_rows -= total_rows                                                                                                                            
+                _total_num_examples += total_rows                    
+                print(file_path, ' class C: loaded in RAM')
+
+                if (max_rows <= 0):
+                    break                
+
+        
+        return files_dict        
+    except  Exception  as e:        
+        raise ValueError('Error in retrieving the METADATA object: ' + str(e))            
+
+    
+#train_dict = get_metadata_dataset('train')
+#print(train_dict)
+        
+#train_dict = get_metadata_dataset1('train', 100000, 258, 7)
+#print(train_dict)
+
+train_dict = get_balance_dataset('train', 500000, 258, 7)
+print(train_dict.keys())

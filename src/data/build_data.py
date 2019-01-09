@@ -174,10 +174,10 @@ def allfeatures_extract_labels(data, columns='MBA_DELINQUENCY_STATUS_next'):
         indices =  columns 
         
      if indices:
-         labels = data[data.columns[indices]]
-         data.drop(data.columns[indices], axis=1, inplace=True)    
-         logger.info('...Labels extracted from Dataset...')
-         return labels
+        labels = data[data.columns[indices]]
+        data.drop(data.columns[indices], axis=1, inplace=True)    
+        logger.info('...Labels extracted from Dataset...')
+        return labels
      else: return None
 
 
@@ -806,13 +806,13 @@ def allfeatures_prepro_file(RAW_DIR, file_path, raw_dir, file_name, target_path,
     
     if (output_hdf == True):
         #with  pd.HDFStore(target_path +'-pp.h5', complib='lzo', complevel=9) as hdf: #complib='lzo', complevel=9
-        train_writer = pd.HDFStore(target_path +'-train_.h5', complib='lzo', complevel=9) 
-        valid_writer = pd.HDFStore(target_path +'-valid_.h5', complib='lzo', complevel=9)
-        test_writer = pd.HDFStore(target_path +'-test_.h5', complib='lzo', complevel=9) 
+        train_writer = pd.HDFStore(target_path +'-train-pp.h5', complib='lzo', complevel=9) 
+        valid_writer = pd.HDFStore(target_path +'-valid-pp.h5', complib='lzo', complevel=9)
+        test_writer = pd.HDFStore(target_path +'-test-pp.h5', complib='lzo', complevel=9) 
             
         print('generating: ', target_path +'-pp.h5')
         train_index, valid_index, test_index = prepro_chunk(file_name, file_path, chunksize, label, log_file, nan_cols, categorical_cols, descriptive_cols, 
-                                                            time_cols, ncols, minmax_cols, robust_normalizer, minmax_normalizer, dist_file, with_index, 
+                                                            time_cols, robust_cols, minmax_cols, robust_normalizer, minmax_normalizer, dist_file, with_index, 
                                                             refNorm, train_period, valid_period, test_period, hdf=[train_writer, valid_writer, test_writer], tfrec=None)            
         
         print(train_index, valid_index, test_index)
@@ -839,7 +839,7 @@ def allfeatures_prepro_file(RAW_DIR, file_path, raw_dir, file_name, target_path,
         valid_writer = tf.python_io.TFRecordWriter(target_path +'-valid-pp.tfrecords')
         test_writer = tf.python_io.TFRecordWriter(target_path +'-test-pp.tfrecords')
         train_index, valid_index, test_index = prepro_chunk(file_name, file_path, chunksize, label, log_file, nan_cols, categorical_cols, descriptive_cols, time_cols, 
-                                                            ncols, minmax_cols, robust_normalizer, minmax_normalizer, dist_file, with_index, refNorm, train_period, 
+                                                            robust_cols, minmax_cols, robust_normalizer, minmax_normalizer, dist_file, with_index, refNorm, train_period, 
 
                                                             valid_period, test_period, hdf=None, tfrec=[train_writer, valid_writer, test_writer]) 
         print(train_index, valid_index, test_index)
@@ -1028,21 +1028,21 @@ def slice_table_sets(prep_dir, set_dir, tag, target_name, input_chunk_size=1200,
         if hdf_target.is_open: hdf_target.close()
         print(e)
                        
-def get_h5_dataset(PRO_DIR, architecture, train_dir, valid_dir, test_dir, train_period=None, valid_period=None, test_period=None):
+def get_h5_dataset(PRO_DIR, architecture, train_dir, valid_dir, test_dir, train_period=None, valid_period=None, test_period=None, cols=None, remainder=False):
     train_path = os.path.join(PRO_DIR, train_dir) if train_dir is not None else None
     valid_path = os.path.join(PRO_DIR, valid_dir) if valid_dir is not None else None
     test_path = os.path.join(PRO_DIR, test_dir) if test_dir is not None else None
     DATA = data_classes.Dataset(architecture, train_path=train_path, valid_path=valid_path, test_path=test_path, 
-                                train_period=train_period, valid_period=valid_period, test_period=test_period)
+                                train_period=train_period, valid_period=valid_period, test_period=test_period, cols=cols, remainder=remainder)
         
     return DATA
 
-def get_h5_bdataset(PRO_DIR, architecture, train_dir, valid_dir, test_dir, train_period=None, valid_period=None, test_period=None):
+def get_h5_bdataset(PRO_DIR, architecture, train_dir, valid_dir, test_dir, train_period=None, valid_period=None, test_period=None, cols=None):
     train_path = os.path.join(PRO_DIR, train_dir) if train_dir is not None else None
     valid_path = os.path.join(PRO_DIR, valid_dir) if valid_dir is not None else None
     test_path = os.path.join(PRO_DIR, test_dir) if test_dir is not None else None
     DATA = balanced_data_classes.Dataset(architecture, train_path=train_path, valid_path=valid_path, test_path=test_path, 
-                                train_period=train_period, valid_period=valid_period, test_period=test_period)
+                                train_period=train_period, valid_period=valid_period, test_period=test_period, cols=cols)
         
     return DATA
     

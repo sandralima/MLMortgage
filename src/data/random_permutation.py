@@ -79,7 +79,7 @@ class CustomRandom(object):
         # r = 0
         while True:        
             value = self.next()
-            if value <= self.max_parms:
+            if value < self.max_parms:
                 batch_random.add(value) #.append(value)
                 # z +=1
                 if len(batch_random) >=batch_size:

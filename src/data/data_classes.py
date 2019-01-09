@@ -15,7 +15,7 @@ RANDOM_SEED = 123 # eliminate for taking from the clock!
 class DataBatch(object):
     """ABC."""
 
-    def __init__(self, architecture, path, period_array, in_tuple=None, dtype='train'):
+    def __init__(self, architecture, path, period_array, in_tuple=None, dtype='train', cols=None, remainder=False):
         if (in_tuple!=None):
             self.orig = Data(in_tuple)
             self.features, self.labels = in_tuple
@@ -27,12 +27,17 @@ class DataBatch(object):
             self.h5_path = path
             self.dtype = dtype            
             self.all_files = glob.glob(os.path.join(self.h5_path, "*.h5"))    
-                                
+            self._num_columns = architecture['n_input'] # dataset_file.get_storer(self.dtype+ '/features').ncols - self.index_length
+            self._num_classes = architecture['n_classes'] # dataset_file.get_storer(self.dtype+'/labels').ncols - self.index_length   
+            
             if (dtype == 'valid'):
                 num_exam = architecture['valid_num_examples']
             else:
                 num_exam = architecture['total_num_examples']
-            self._dict = self.get_metadata_dataset(num_exam)
+            if (cols==None):
+                self._dict = self.get_metadata_dataset(num_exam)
+            else:
+                self._dict = self.get_metadata_dataset_cols(num_exam, cols, remainder)
             if (self._dict == None):
                 raise ValueError('DataBatch: The dictionary was not loaded!')
             
@@ -45,11 +50,13 @@ class DataBatch(object):
             # self._current_num_examples = self.dataset.get_storer(self.dtype+'/features').nrows
             # self._num_columns = self.dataset.get_storer('features').attrs.num_columns
             self.period_range =  period_array #set(range(period_array[0], period_array[1]+1))
-            self._num_columns = architecture['n_input'] # dataset_file.get_storer(self.dtype+ '/features').ncols - self.index_length
-            self._num_classes = architecture['n_classes'] # dataset_file.get_storer(self.dtype+'/labels').ncols - self.index_length   
 
             #self.period_features = set(list(self.dataset['features'].index.get_level_values(2)))
             #self.period_inter = self.period_features.intersection(self.period_range)            
+            self.transitions = {'MBA_DELINQUENCY_STATUS':  ['0','3','6','9','C','F','R']}              
+            if any('MBA_DELINQUENCY_STATUS' in s for s in self.features_list):        
+                self.idx_transitions = [self.features_list.index('MBA_DELINQUENCY_STATUS_' + v) for v in self.transitions['MBA_DELINQUENCY_STATUS']]
+            
         else: #Dataset empty!
             self._dict = None
 
@@ -88,6 +95,155 @@ class DataBatch(object):
 
             files_dict[0]['nrows'] = self._total_num_examples
             files_dict[0]['init_index'] = 0
+            files_dict[0]['end_index'] = self._total_num_examples                                     
+            #files_dict[0]['class_weights']  = self.get_weights_class(files_dict[0]['dataset_labels'])
+            files_dict[0]['class_weights']  = self.get_global_weights_transition_class(files_dict[0])
+
+            return files_dict        
+        except  Exception  as e:        
+            raise ValueError('Error in retrieving the METADATA object: ' + str(e))    
+
+    def get_weights_class(self, labels):
+        class_weights = np.sum(labels, axis=0)
+        print('class_weights', class_weights)
+        class_weights = np.round(class_weights/np.float32(self._total_num_examples),decimals=3)
+        # 1-weights approach:
+        class_weights = np.subtract([1]*len(class_weights), class_weights)
+        #normalizing 1-weights approach:
+        #sumcw = np.sum(class_weights)
+        #class_weights = np.round(class_weights/np.float32(sumcw),decimals=3)
+        print('class_weights', class_weights)
+        return class_weights
+        
+        
+    def get_weights_transition_class(self, data_dict):
+        categorical_cols = {'MBA_DELINQUENCY_STATUS':  ['0','3','6','9','C','F','R']}
+        idx_categorical_cols = {}
+        
+        for cat, values in categorical_cols.items():
+            idx_categorical_cols[cat] = [[], []]
+            if any(cat in s for s in self.features_list):        
+                idx_categorical_cols[cat][0].extend([self.features_list.index(cat+'_'+v) for v in values])
+                idx_categorical_cols[cat][1].extend([cat+'_'+v for v in values])
+                print(cat, 'is found', len(values), len(idx_categorical_cols[cat][0]), len(idx_categorical_cols[cat][1]))
+        
+        print(idx_categorical_cols)
+        self._idx_categorical_cols = idx_categorical_cols['MBA_DELINQUENCY_STATUS'][0]
+        trans_subset = []
+        weights_mtx=[]
+        for cat, values in idx_categorical_cols.items():  
+            for val in values[0]:
+                print('val', val)
+                trans_subset = [data_dict['dataset_labels'][i] for i, elem in enumerate(data_dict['dataset_features']) if elem[val]==1]
+                total_ex = len(trans_subset)           
+                print('total_ex: ', total_ex)
+                if (total_ex>0):                
+                    print('trans_subset[0]: ', trans_subset[0])
+                    class_weights = np.sum(trans_subset, axis=0)
+                    print('class_weights', class_weights)
+                    class_weights = np.round(class_weights/np.float32(total_ex),decimals=3)
+                    # 1-weights approach:
+                    class_weights = np.subtract([1]*len(class_weights), class_weights)
+                else:
+                    class_weights = np.zeros((self._num_classes), dtype='float32')  
+                    
+                print('class_weights', class_weights)
+                weights_mtx.append(class_weights)
+        
+        weights_mtx= np.array(weights_mtx)
+        print('weights_mtx', weights_mtx)
+        
+        return weights_mtx
+            
+        
+    def get_global_weights_transition_class(self, data_dict):
+        categorical_cols = {'MBA_DELINQUENCY_STATUS':  ['0','3','6','9','C','F','R']}
+        idx_categorical_cols = {}
+        
+        for cat, values in categorical_cols.items():
+            idx_categorical_cols[cat] = [[], []]
+            if any(cat in s for s in self.features_list):        
+                idx_categorical_cols[cat][0].extend([self.features_list.index(cat+'_'+v) for v in values])
+                idx_categorical_cols[cat][1].extend([cat+'_'+v for v in values])
+                print(cat, 'is found', len(values), len(idx_categorical_cols[cat][0]), len(idx_categorical_cols[cat][1]))
+        
+        print(idx_categorical_cols)
+        self._idx_categorical_cols = idx_categorical_cols['MBA_DELINQUENCY_STATUS'][0]
+        trans_subset = []
+        weights_mtx=[]
+        for cat, values in idx_categorical_cols.items():  
+            for val in values[0]:
+                print('val', val)
+                trans_subset = [data_dict['dataset_labels'][i] for i, elem in enumerate(data_dict['dataset_features']) if elem[val]==1]
+                total_ex = len(trans_subset)           
+                print('total_ex: ', total_ex, 'self._total_num_examples: ', self._total_num_examples)
+                if (total_ex>0):                
+                    print('trans_subset[0]: ', trans_subset[0])
+                    class_weights = np.sum(trans_subset, axis=0)
+                    print('class_weights', class_weights)
+                    class_weights = np.round(class_weights/np.float32(self._total_num_examples),decimals=3)
+                    # 1-weights approach:
+                    class_weights = np.subtract([1]*len(class_weights), class_weights)
+                else:
+                    class_weights = np.zeros((self._num_classes), dtype='float32')  
+                    
+                print('class_weights', class_weights)
+                weights_mtx.append(class_weights)
+        
+        weights_mtx= np.array(weights_mtx)
+        print('weights_mtx', weights_mtx)
+        
+        return weights_mtx
+        
+
+    def get_metadata_dataset_cols(self, max_rows, cols, remainder):
+        try:                          
+            files_dict = {}  
+            self._total_num_examples = 0
+            ok_inputs = True
+            files_dict[0] = {}
+            files_dict[0]['dataset_features'] = [] # np.empty((max_rows, num_feat), dtype=np.float32)
+            files_dict[0]['dataset_labels'] = [] # np.empty((max_rows,num_class), dtype=np.int8)            
+            for i, file_path in zip(range(len(self.all_files)), self.all_files):    
+                with pd.HDFStore(file_path) as dataset_file:                
+                    print(file_path, '...to load')
+                    total_rows = dataset_file.get_storer(self.dtype + '/features').nrows
+                    if (ok_inputs): 
+                        self.index_length = len(dataset_file.get_storer(self.dtype+'/features').attrs.data_columns)            
+                        if (remainder==True): 
+                            cols = set(dataset_file.get_storer(self.dtype+'/features').attrs.non_index_axes[0][1][self.index_length:]) - set(cols)
+                            cols =list(cols)                            
+                        self.features_list = cols
+                        print('Columns of dataset: ', len(self.features_list), self.features_list)
+                        self.labels_list = dataset_file.get_storer(self.dtype+'/labels').attrs.non_index_axes[0][1][self.index_length:]                       
+                        ok_inputs = False                    
+                    
+                    if (total_rows <= max_rows):
+                        max_rows -= total_rows
+                        df_feat = dataset_file.select(self.dtype+'/features', start=0)
+                        files_dict[0]['dataset_features'].extend(df_feat[self.features_list].values) #, stop=500000                            
+                        del df_feat
+                        print('len(files_dict[0][dataset_features][0]): ', len(files_dict[0]['dataset_features'][0]))
+                        df_lab = dataset_file.select(self.dtype+'/labels', start=0, stop=total_rows)
+                        files_dict[0]['dataset_labels'].extend(df_lab.values)
+                        del df_lab
+                    else:
+                        total_rows = max_rows
+                        df_feat = dataset_file.select(self.dtype+'/features', start=0, stop=total_rows)
+                        files_dict[0]['dataset_features'].extend(df_feat[self.features_list].values) #, stop=500000
+                        del df_feat
+                        print('len(files_dict[0][dataset_features][0]): ', len(files_dict[0]['dataset_features'][0]))
+                        df_lab = dataset_file.select(self.dtype+'/labels', start=0, stop=total_rows)
+                        files_dict[0]['dataset_labels'].extend(df_lab.values)
+                        del df_lab
+                                                                                                            
+                    self._total_num_examples += total_rows                    
+                    print(file_path, ' loaded in RAM')
+                    if (total_rows == max_rows):
+                        break
+
+            files_dict[0]['nrows'] = self._total_num_examples
+            files_dict[0]['init_index'] = 0
             files_dict[0]['end_index'] = self._total_num_examples                         
             class_weights = np.sum(files_dict[0]['dataset_labels'], axis=0)
             print('class_weights', class_weights)
@@ -103,7 +259,6 @@ class DataBatch(object):
             return files_dict        
         except  Exception  as e:        
             raise ValueError('Error in retrieving the METADATA object: ' + str(e))    
-
             
 #    def get_metadata_dataset_repeats(self, repeats):
 #        try:                          
@@ -213,8 +368,9 @@ class DataBatch(object):
             
             # self.dataset.close()
             # self.dataset = pd.HDFStore(self.all_files[self.dataset_index]) # the next file of the path
-            # self._current_num_examples = self.dataset.get_storer(self.dtype+'/features').nrows
-        return temp_features, temp_labels, np.array([1.0], dtype=np.dtype('float32'))  # temp_weights
+            # self._current_num_examples = self.dataset.get_storer(self.dtype+'/features').nrows        
+        transitions = temp_features[:, self.idx_transitions]
+        return temp_features, temp_labels, np.array([1.0], dtype=np.dtype('float32')), transitions  # temp_weights
 
 
     def next_random_batch_perfiles(self, batch_size): # pending!!
@@ -268,69 +424,39 @@ class DataBatch(object):
             raise TypeError('DataBatch: batch_size has to be of int type.')
         if (self.h5_path==None):
             raise ValueError('DataBatch: The file_dataset was not loaded!')              
-        # all_files = glob.glob(os.path.join(self.h5_path, "*.h5"))        
         
-        #period_range =  set(range(self.period_range[0], self.period_range[1]+1))            
-        
-        #temp_features = pd.DataFrame(None,columns=self.features_list)        
-        #temp_labels = pd.DataFrame(None,columns=self.labels_list)  
-        temp_features = np.empty((batch_size,len(self.features_list)))
-        temp_labels = np.zeros((batch_size,len(self.labels_list)))
+        temp_features = [] #np.empty((batch_size,len(self.features_list)))
+        temp_labels = [] #np.zeros((batch_size,len(self.labels_list)))        
         random_batch = np.array(list(self._loan_random.get_batch(batch_size)))
-        #startTime = datetime.now()       
-        #partial_number = 0         
+        #print(len(random_batch), random_batch)
         orb_size = 0        
         for k, v in self._dict.items():
             try:                
-                #startTime1 = datetime.now()                
-                #if self.dataset.is_open: 
-                #    self.dataset.close()
-                    # gc.collect()
                 records_per_file = np.logical_and(random_batch>=v['init_index'], random_batch<(v['end_index']))                        
-                orb = np.sort(random_batch[records_per_file]) - v['init_index']      
-                # print('File: ', k, 'Time for random selection: ', datetime.now() - startTime1, ' records: ',  len(orb))
+                orb = np.sort(random_batch[records_per_file]) - v['init_index']  
+                #print(len(orb), orb)
+                assert(len(orb)==batch_size)
+                #print(len(orb), orb)
                 if (len(orb)>0):
-                    #file_path = v['path']                    
-                    #startTime2 = datetime.now()
-                    #self.dataset = pd.HDFStore(file_path) # the first file of the path
-                    #self._current_num_examples = self.dataset.get_storer(self.dtype + '/features').nrows
-                    # String_batch = ', '.join(map(str, orb))
-                    # df_features = self.dataset.select(self.dtype + '/features', "level_0 in [" + String_batch + "]")
-                    # df_labels = self.dataset.select(self.dtype + '/labels', "level_0 in [" + String_batch + "]")                    
-                    #temp_features = np.concatenate((temp_features, self.dataset.select(self.dtype+'/features', where=orb).values)) #this way is heavy
-                    #temp_labels = np.concatenate((temp_labels, self.dataset.select(self.dtype+'/labels', where=orb).values))
-
-                    # df_features = v['dataset_features'][orb, :]
-                    temp_features[orb_size : orb_size + len(orb), :] = np.array([v['dataset_features'][index] for index in orb]) # v['dataset_features'][orb, :]
-                    # df_labels = v['dataset_labels'][orb, :]
-                    temp_labels[orb_size : orb_size + len(orb), :] = np.array([v['dataset_labels'][index] for index in orb]) # v['dataset_labels'][orb, :]                    
-                    # df_features = v['dataset'].select(self.dtype+'/features', where=orb)
-                    #df_labels = v['dataset'].select(self.dtype+'/labels', where=orb)
-                    
-                    # df_features = pd.read_hdf(self.dataset, self.dtype+'/features', where=orb) # the same time as above
-                    # df_labels = pd.read_hdf(self.dataset, self.dtype+'/labels', where=orb)            
-
-                    #print('File: ', k, 'Time for one file lecture: ', datetime.now() - startTime2, ' records: ',  len(orb))
-                    
-#                    startTime3 = datetime.now()
-                    # temp_features = np.concatenate((temp_features, df_features))
-                    # temp_labels = np.concatenate((temp_labels, df_labels))
-#                    print('File: ', k, 'Time for append: ', datetime.now() - startTime3, ' records: ',  len(orb))
-                    
-                    # print('File ', k, ': ',file_path, ' Time for one file lecture/append: ', datetime.now() - startTime1, ' records: ',  len(orb))            
+                    temp_features.extend(np.array([v['dataset_features'][index] for index in orb]))
+                    temp_labels.extend(np.array([v['dataset_labels'][index] for index in orb]))                      
+                    #print('temp ready!!')
                     orb_size += len(orb)
-                #partial_number = partial_number + self._current_num_examples
             except Exception as e:
-                print('Invalid Range: ' + str(e))                                    
-
+                print('Invalid Range: ' + str(e))    
+                
+        assert(np.where(np.sum(temp_labels, axis=1)==0)[0].size == 0)
+        temp_features = np.array(temp_features)
+        temp_labels = np.array(temp_labels)
+        #print('shapes: ', temp_features.shape, temp_labels.shape)
+        assert(temp_features.shape[0]==batch_size)
+        assert(temp_labels.shape[0]==batch_size)
         # the same permutation:       
         permutation = np.random.permutation(len(temp_features))
-        temp_features = temp_features[permutation]
-        temp_labels = temp_labels[permutation]        
-        #np.random.shuffle(temp_features)
-        #np.random.shuffle(temp_labels)
-        #print('Time for Getting ', orb_size, ' random elements: ', datetime.now() - startTime)                    
-        return temp_features, temp_labels #, np.array([1.0], dtype=np.dtype('float32'))  # temp_weights    
+        temp_features = temp_features[permutation, :]
+        temp_labels = temp_labels[permutation, :]                
+        transitions = temp_features[:, self.idx_transitions]
+        return temp_features, temp_labels, transitions #, np.array([1.0], dtype=np.dtype('float32'))  # temp_weights    
     
     
     def next_random_batch_ind_access(self, batch_size): # pending!! --_ind_access
@@ -453,18 +579,18 @@ class Dataset(object):
     """A new class to represent learning datasets."""
 
     def __init__(self, architecture, train_tuple=None, valid_tuple=None, test_tuple=None, feature_columns=None, train_path=None, valid_path=None, test_path=None, 
-                 train_period=[121, 279], valid_period=[280,285], test_period=[286, 304]):
+                 train_period=[121, 279], valid_period=[280,285], test_period=[286, 304], cols=None, remainder=False):
         if (train_tuple!=None and valid_tuple!=None and test_tuple!=None):
-            self.train = DataBatch(train_tuple, train_period)
+            self.train = DataBatch(train_tuple, train_period, cols=cols)
             self.validation = Data(valid_tuple)
             self.test = Data(test_tuple)
             self.feature_columns = feature_columns
         elif (train_path==None and valid_path==None and test_path==None):  
             raise ValueError('DataBatch: The path for at least one set was not loaded!')
         else:
-            self.train = DataBatch(architecture, train_path, train_period, dtype='train') 
-            self.validation = DataBatch(architecture, valid_path, valid_period, dtype='valid') # Data((h5_dataset.get('valid/features'), h5_dataset.get('valid/labels')))
-            self.test = DataBatch(architecture, test_path, test_period, dtype='test') # Data((h5_dataset.get('test/features'), h5_dataset.get('test/labels'))) #if it gives some trouble, it will be loaded at the end.
+            self.train = DataBatch(architecture, train_path, train_period, dtype='train', cols=cols, remainder=remainder) 
+            self.validation = DataBatch(architecture, valid_path, valid_period, dtype='valid', cols=cols, remainder=remainder) # Data((h5_dataset.get('valid/features'), h5_dataset.get('valid/labels')))
+            self.test = DataBatch(architecture, test_path, test_period, dtype='test', cols=cols, remainder=remainder) # Data((h5_dataset.get('test/features'), h5_dataset.get('test/labels'))) #if it gives some trouble, it will be loaded at the end.
 
 
 def get_weights(labels):

@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.join(Path(os.getcwd()).parents[1], 'src', 'data'))
 # from build_data import encode_sparsematrix
 import make_dataset as md
+import build_data as bd
 
 import numpy as np
 import tensorflow as tf
@@ -1298,6 +1299,8 @@ def main(_):
     FLAGS = FLAGS_setting(FLAGS, 1)
     files_dict = get_files_dict(FLAGS)
     architecture = architecture_settings(files_dict, FLAGS)
+    # ncols = ['MBA_DAYS_DELINQUENT', 'CURRENT_INTEREST_RATE', 'LOANAGE', 'CURRENT_BALANCE', 'SCHEDULED_PRINCIPAL', 'SCHEDULED_MONTHLY_PANDI', 'LLMA2_CURRENT_INTEREST_SPREAD', 'LLMA2_C_IN_LAST_12_MONTHS', 'LLMA2_30_IN_LAST_12_MONTHS', 'LLMA2_60_IN_LAST_12_MONTHS', 'LLMA2_90_IN_LAST_12_MONTHS', 'LLMA2_FC_IN_LAST_12_MONTHS', 'LLMA2_REO_IN_LAST_12_MONTHS', 'LLMA2_0_IN_LAST_12_MONTHS', 'LLMA2_HIST_LAST_12_MONTHS_MIS', 'NUM_MODIF', 'P_RATE_TO_MOD', 'MOD_RATE', 'DIF_RATE', 'P_MONTHLY_PAY', 'MOD_MONTHLY_PAY', 'DIF_MONTHLY_PAY', 'CAPITALIZATION_AMT', 'MORTGAGE_RATE', 'FICO_SCORE_ORIGINATION', 'INITIAL_INTEREST_RATE', 'ORIGINAL_LTV', 'ORIGINAL_BALANCE', 'BACKEND_RATIO', 'ORIGINAL_TERM', 'SALE_PRICE', 'PREPAY_PENALTY_TERM', 'NUMBER_OF_UNITS', 'MARGIN', 'PERIODIC_RATE_CAP', 'PERIODIC_RATE_FLOOR', 'LIFETIME_RATE_CAP', 'LIFETIME_RATE_FLOOR', 'RATE_RESET_FREQUENCY', 'PAY_RESET_FREQUENCY', 'FIRST_RATE_RESET_PERIOD', 'LLMA2_PRIME', 'LLMA2_SUBPRIME', 'LLMA2_APPVAL_LT_SALEPRICE', 'LLMA2_ORIG_RATE_SPREAD', 'AGI', 'UR', 'LLMA2_ORIG_RATE_ORIG_MR_SPREAD', 'COUNT_INT_RATE_LESS', 'NUM_PRIME_ZIP']
+    # NUM_DATA = bd.get_h5_dataset(PRO_DIR, architecture, FLAGS.train_dir, None, None, train_period=None, valid_period=None, test_period=None, cols=ncols)
     DATA = md.get_h5_data(PRO_DIR, architecture, FLAGS.train_dir, FLAGS.valid_dir, FLAGS.test_dir)         
 
     print("FLAGS", FLAGS)

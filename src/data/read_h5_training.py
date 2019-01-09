@@ -145,5 +145,6 @@ def get_balance_dataset(dtype, max_rows, num_feat, num_class):
 #train_dict = get_metadata_dataset1('train', 100000, 258, 7)
 #print(train_dict)
 
-train_dict = get_balance_dataset('train', 500000, 258, 7)
+
+train_dict = get_balance_dataset('train', 150000, 258, 7)
 print(train_dict.keys())

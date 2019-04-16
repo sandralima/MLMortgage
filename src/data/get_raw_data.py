@@ -1,4 +1,41 @@
 # pylint: disable=missing-docstring
+'''
+1) Retrieving Records from Vertica: It is slower than making directly from Vertica Editor.
+
+$ python get_raw_data.py --help
+
+usage: get_raw_data.py [-h] [--retrieve_step RETRIEVE_STEP]
+                       [--period_from PERIOD_FROM] [--period_to PERIOD_TO]
+                       [--loan_number_from LOAN_NUMBER_FROM]
+                       [--loan_number_to LOAN_NUMBER_TO]
+                       [--retrieve_dir RETRIEVE_DIR] [--filename FILENAME]
+                       [--retrieve_chunksize RETRIEVE_CHUNKSIZE]
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --retrieve_step RETRIEVE_STEP
+                        To execute a retrieveng method
+  --period_from PERIOD_FROM
+                        Init Period, the default value includes all periods
+  --period_to PERIOD_TO
+                        End Period, the default value includes all periods
+  --loan_number_from LOAN_NUMBER_FROM
+                        Init Loan Number to avoid repetitions
+  --loan_number_to LOAN_NUMBER_TO
+                        End Loan Number to avoid repetitions
+  --retrieve_dir RETRIEVE_DIR
+                        Directory to save raw data inside data/raw/. If it
+                        does not exist, it will be created...
+  --filename FILENAME   File name for raw data inside data/raw/[retrieve_dir].
+                        If it does not exist, it will be created, otherwise it
+                        will open to append
+  --retrieve_chunksize RETRIEVE_CHUNKSIZE
+                        Chunk size to put into the h5 file...
+						
+Example of usage:
+
+$ python get_raw_data.py --period_from=151 --period_to=155 --loan_number_from=1 --loan_number_to=50 --retrieve_dir=chuncks_random_c1mill --filename=dynstat_random --retrieve_chunksize=50000
+'''
 
 import os
 import logging
@@ -64,7 +101,7 @@ def vertica_connection():
         return conn    
     except Exception as e:
         logger.critical('Exception Error: ' + str(e))
-    
+
 
 def execute_query(connection, query,  query_file, chunksize=0):
     '''Execute a query from a database connection and return the result in a DataFrame.
@@ -708,12 +745,12 @@ def update_parser(parser):
     parser.add_argument(
         '--filename',
         type=str,
-        default='dynstat_random',
+        default='results',
         help='File name for raw data inside data/raw/[retrieve_dir]. If it does not exist, it will be created, otherwise it will open to append')    
     parser.add_argument(
         '--retrieve_chunksize',
         type=int,
-        default=500000,
+        default=5000,
         help='Chunk size to put into the h5 file...')    
             
     return parser.parse_known_args()
